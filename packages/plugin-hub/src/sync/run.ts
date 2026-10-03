@@ -294,10 +294,10 @@ function localRemote(path: string, url: string): string | null {
 }
 
 /**
- * Local receive-pack runs the destination's hooks outside the agent box. A
- * destination any person can write is therefore forbidden, even via a symlink
- * or a separate pushurl. Account-owned bare repositories outside those roots
- * remain valid. get-url expands the account's trusted insteadOf rewrites.
+ * Local destinations any person can write are forbidden, even via a symlink
+ * or separate pushurl. Passing this structural check does NOT authorize a
+ * sandbox grant: grantSyncRemotes separately requires an exact owner-declared
+ * canonical capability. get-url expands explicitly granted trusted rewrites.
  */
 async function safeRemotes(path: string, remote: string, registry: Registry, code: string): Promise<{ fetch: string; push: string[] }> {
   // SSH-only sync must not touch unrelated local or automounted declarations.

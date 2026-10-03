@@ -7,9 +7,11 @@ create table outbound_delivery (
   attempt_id text,
   receipt jsonb,
   notified boolean not null default false,
+  checked_at timestamptz not null default '-infinity',
   cause text,
   updated_at timestamptz not null default now()
 );
+create index outbound_delivery_fair_scan on outbound_delivery (door, checked_at, confirmation_id);
 grant select on outbound_delivery to hub_runner, hub_door, hub_hub;
 grant insert, update on outbound_delivery to hub_door;
 

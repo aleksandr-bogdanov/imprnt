@@ -1101,7 +1101,7 @@ export function syncCause(language: Language, code: string): string {
   const causes: Record<string, [string, string]> = {
     path: ["repository path is missing or invalid", "путь репозитория отсутствует или неверен"],
     person: ["repository is outside the person's tree", "репозиторий вне дерева человека"],
-    isolation: ["sync isolation or its explicit authentication paths are unavailable; no unboxed fallback is allowed", "изоляция синхронизации или явно разрешённые пути авторизации недоступны; запуск без изоляции запрещён"],
+    isolation: ["sync isolation, explicit authentication paths, or declared local remote capabilities are unavailable; no unboxed fallback is allowed", "изоляция синхронизации, явно разрешённые пути авторизации или локальные Git-назначения недоступны; запуск без изоляции запрещён"],
     locked: ["repository is already being synchronized", "репозиторий уже синхронизируется"],
     config: ["repository config names a program, which the sync will not run: declare an ssh command in the registry entry, or use explicitly granted sync configuration", "в настройках репозитория указана программа, синхронизация её не запустит: укажите команду ssh в реестре или используйте явно разрешённые настройки синхронизации"],
     commit: ["committing the uncommitted changes failed", "не удалось сохранить несохранённые изменения"],

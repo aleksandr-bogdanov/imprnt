@@ -53,7 +53,7 @@ test("ROLL-07 ROLL-31 required vault and nested repository commits reach local r
       ...declared.flatMap((repo, index) => [
         "", "[[repositories]]", `id = ${JSON.stringify(repo.id)}`,
         `person = ${JSON.stringify(index === 1 ? "p2" : "p1")}`,
-        `path = ${JSON.stringify(repo.path)}`, 'remote = "origin"',
+        `path = ${JSON.stringify(repo.path)}`, `sync_local_remotes = ${JSON.stringify([realpathSync(repo.remote)])}`, 'remote = "origin"',
         'branch = "main"', "required = true",
       ]), "",
     ].join("\n"))
@@ -307,7 +307,7 @@ for (const alias of [false, true]) test(`ROLL-07 repository lock spans different
       symlinkSync(f.repos[0].path, aliasPath)
       let text = readFileSync(f.registryFile, "utf8")
       text = text.replace(`repositories = ["p1-vault"]`, `repositories = ["p1-alias"]`)
-      text += `\n[[repositories]]\nid = "p1-alias"\nperson = "p1"\npath = ${JSON.stringify(aliasPath)}\nremote = "origin"\nbranch = "main"\nrequired = true\n`
+      text += `\n[[repositories]]\nid = "p1-alias"\nperson = "p1"\npath = ${JSON.stringify(aliasPath)}\nsync_local_remotes = ${JSON.stringify([realpathSync(f.repos[0].remote)])}\nremote = "origin"\nbranch = "main"\nrequired = true\n`
       writeFileSync(f.registryFile, text)
     }
     const git = observeGit(f.root)

@@ -1,3 +1,4 @@
+import { privateOptions, protectedPath } from "./protected-path.ts";
 /** Bridge to an INSTALLED private v2 source. Provider code/endpoints/cookies stay private.
  * Supports only verbs actually shipped there: KA contact/send and LinkedIn inbox reply.
  * LinkedIn comment posting/feed require a private adapter implementing those surfaces.
@@ -11,6 +12,8 @@ function options(raw: Record<string, unknown>): Options {
   const o = raw as unknown as Options;
   if (!["linkedin","kleinanzeigen"].includes(o.source) || !isAbsolute(o.module ?? "") || !isAbsolute(o.source_dir ?? "") || !o.identity ||
     !Array.isArray(o.token_argv) || !o.token_argv.length || o.token_argv.some(v => typeof v !== "string")) throw new Error("private-adapter-config");
+  protectedPath(o.source_dir);
+  privateOptions(raw, "/");
   return o;
 }
 async function context(o: Options, signal: AbortSignal) {

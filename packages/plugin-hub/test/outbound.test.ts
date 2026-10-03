@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, afterAll, afterEach } from "bun:test";
-import { mkdtempSync, writeFileSync, appendFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, chmodSync, realpathSync, existsSync, writeFileSync, appendFileSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
 import { stageEffects, closeStages, removeEffectDirs, pass, OWNER, PERSON, DOOR, type EffectsStage } from "./helpers/effects-fixture.ts";
 import { writeRegistry } from "./helpers/authorized-registry.ts";
@@ -13,6 +13,8 @@ import { pollConfirmations } from "../src/door/confirm.ts";
 import { outboundApprovals, deliverOutbound } from "../src/outbound/delivery.ts";
 import { readOutbound, nextRead, NORMAL_MS, COOKING_MS } from "../src/outbound/reading.ts";
 import { enqueueInbound } from "../src/store/inbound.ts";
+import { outboundFindings } from "../src/check/outbound.ts";
+import { privateOptions } from "../src/outbound/protected-path.ts";
 import { readOutboundRequest } from "../src/mcp/outbound-contract.ts";
 
 let cluster: Cluster; const dirs: string[] = [];
@@ -20,16 +22,22 @@ beforeAll(async () => { cluster = await startCluster(); });
 afterEach(closeStages);
 afterAll(async () => { removeEffectDirs(); dirs.forEach(p => rmSync(p, { recursive: true, force: true })); await cluster.stop(); });
 const target = { kind: "comment", id: "post-1:comment-2", url: "https://www.linkedin.com/posts/example", label: "Comment by a reader" };
+function privateFixture() {
+  const parent=join(realpathSync(homedir()),".hub-outbound-test-fixtures");
+  mkdirSync(parent,{recursive:true,mode:0o700});
+  const root=mkdtempSync(join(parent,"case-")); chmodSync(root,0o700); dirs.push(root); return root;
+}
 async function fixture(mode = "success") {
   const stage = await stageEffects(cluster); const root = mkdtempSync(join(tmpdir(), "hub-outbound-")); dirs.push(root);
-  const log = join(root, "calls.jsonl"), module = join(root, "adapter.mjs"), config = join(root, "accounts.json");
+  const privateDir=privateFixture();
+  const log = join(root, "calls.jsonl"), module = join(privateDir, "adapter.mjs"), config = join(privateDir, "accounts.json");
   writeFileSync(log, "");
   writeFileSync(module, `import {appendFileSync} from 'node:fs';
 export const capabilities=['comment','message','seller_contact']; export const surfaces=['comments','feed'];
 export async function send(m,o){appendFileSync(${JSON.stringify(log)},JSON.stringify(m)+'\\n'); if(o.mode==='uncertain')throw Error('synthetic lost response');return {identity:m.identity,receipt:'provider-message-42'}};
 export async function read(){return {identity:'Owner profile',fresh_post_until:new Date(Date.now()+3600000).toISOString(),findings:[{id:'finding1',surface:'feed',target:${JSON.stringify(target)},text:'Untrusted feed text',changed_at:'2026-10-03T00:00:00Z'}]}};`);
-  const account = { id: "career", person: PERSON, agent: "p1-lair", door: DOOR, platform: "linkedin", identity: "Owner profile", adapter_module: module, options: { mode } };
-  writeFileSync(config, JSON.stringify([account]));
+  const account = { id: "career", person: PERSON, agent: "p1-lair", door: DOOR, platform: "linkedin", capabilities:["comment","message","seller_contact"], identity: "Owner profile", adapter_module: module, options: { mode } };
+  writeFileSync(config, JSON.stringify([account]),{mode:0o600});
   const path = writeRegistry(root, { hub: { state_dir: root }, people: [{ id: PERSON, allowed_senders: { [DOOR]: [OWNER] } } as never],
     presets: { daily: { adapter: "synthetic", model: "m", provider: "p", effort: "medium", paid: "plan" } },
     agents: [{ id: "p1-lair", person: PERSON, preset: "daily", chat: stage.channel, door: DOOR, runner: "runner-test" }] });
@@ -41,14 +49,14 @@ export async function read(){return {identity:'Owner profile',fresh_post_until:n
   const binding: McpBinding = { store: stage.as("hub_runner"), person: PERSON, agent: "p1-lair", conversation: "outbound-chat", kind: "master", registry, attempt: () => null };
   const draft = (key: string, text = "Exact approved reply", extra = {}) => callTool(binding, "hub_outbound", { action: "draft", request_key: key, account: "career", target, text, ...extra });
   const calls = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
-  return { stage, root, account, config, registry, binding, draft, calls };
+  return { stage, root, path, account, config, registry, binding, draft, calls };
 }
 async function approve(f: Awaited<ReturnType<typeof fixture>>, operation: string, owner = OWNER) {
   const row = (await readOperation(f.stage.as("hub_runner"), operation)).at(-1)!;
   const ctx = f.stage.context({ registry: f.registry, hooks: outboundApprovals() }), gate = f.stage.gate();
   await pass(ctx, gate);
   const last = (await readEffects(f.stage.as("hub_door"), [row.effect_keys.at(-1)!]))[0];
-  f.stage.fake.react(f.stage.channel, last.platform_id!, "✅", owner);
+  f.stage.fake.react(row.chat, last.platform_id!, "✅", owner);
   await pollConfirmations(ctx, gate);
   if (owner === OWNER) { const checked = (await readOperation(f.stage.as("hub_runner"), operation)).at(-1)!; expect({state:checked.state,evidence:checked.evidence}).toMatchObject({state:"approved"}); }
   return row;
@@ -112,15 +120,68 @@ test("LinkedIn findings persist for master selection with two-hour/five-minute d
 });
 
 test("private legacy bridge calls existing seller and inbox verbs with exact text; missing comment support refuses", async () => {
-  const root = mkdtempSync(join(tmpdir(), "hub-outbound-legacy-")); dirs.push(root);
+  const root = privateFixture();
   const module = join(root,"legacy.mjs"), log = join(root,"received.json");
   writeFileSync(module, `import {writeFileSync} from 'node:fs'; const post=async(dir,id,text)=>{writeFileSync(${JSON.stringify(log)},JSON.stringify({dir,id,text}));return {delivered:true}}; export const verbs={reply:post,send:post,contact:post};`);
+  writeFileSync(join(root,"token"),"#!/bin/sh\nexit 1\n",{mode:0o700});
   const bridge = await import("../src/outbound/legacy-adapter.ts");
   const message = { account:"test", identity:"Owner profile", target:{...target,kind:"message" as const,id:"msg-synthetic-thread"}, text:"Exact synthetic message",attempt_id:"one-attempt" };
-  const options = {source:"linkedin",module,source_dir:root,identity:message.identity,token_argv:["/not-executed"]};
+  const options = {source:"linkedin",module,source_dir:root,identity:message.identity,token_argv:[join(root,"token")]};
   expect((await bridge.send(message,options,new AbortController().signal)).receipt).toBe("legacy-http-accepted:one-attempt");
   expect(JSON.parse(readFileSync(log,"utf8")).text).toBe(message.text);
   await expect(bridge.send({...message,target:{...target,kind:"comment"}},options,new AbortController().signal)).rejects.toThrow();
   await bridge.send({...message,target:{...message.target,kind:"seller_contact",id:"123456"}}, {...options,source:"kleinanzeigen"},new AbortController().signal);
   expect(JSON.parse(readFileSync(log,"utf8")).id).toBe("123456");
+});
+
+
+test("held sends and undeliverable notice debt cannot starve later approvals across restarts", async () => {
+  const f=await fixture();
+  for(let i=0;i<40;i++) {
+    const draft=await f.draft(`held-${i}`); const row=await approve(f,draft.object_id!);
+    if(i>=20) await f.stage.admin`update outbound_delivery set state='uncertain', cause='lost-response' where confirmation_id=${row.id}`;
+  }
+  const newChat=f.stage.fake.addChannel({name:"new-origin"});
+  writeFileSync(f.path,readFileSync(f.path,"utf8").replaceAll(f.stage.channel,newChat));
+  const later=await f.draft("valid-after-held"); const row=await approve(f,later.object_id!);
+  await f.stage.admin`update outbound_delivery set checked_at=now() where confirmation_id=${row.id}`;
+  for(let pass=0;pass<3;pass++) await deliverOutbound(f.stage.fresh("hub_door"),f.registry(),DOOR);
+  expect(f.calls()).toHaveLength(1);
+  expect((await callTool(f.binding,"hub_outbound",{action:"inspect",draft_id:later.object_id})).stage).toBe("sent");
+  const [debt]=await f.stage.admin`select count(*)::int as n from outbound_delivery where state='uncertain' and not notified`;
+  expect(debt.n).toBe(20);
+  await deliverOutbound(f.stage.fresh("hub_door"),f.registry(),DOOR); expect(f.calls()).toHaveLength(1);
+});
+
+
+test("protected private code is not imported by drafting; invalid mutable-path accounts do not stop valid sends", async () => {
+  const f=await fixture();
+  const imported=join(f.root,"imported");
+  appendFileSync(f.account.adapter_module,`\nappendFileSync(${JSON.stringify(imported)},'imported');\n`);
+  const hostile=join(f.root,"agent-writable.mjs");writeFileSync(hostile,"throw Error('must never import');");
+  expect(()=>privateOptions({token_argv:[hostile]},"/",f.registry())).toThrow();
+  expect(()=>privateOptions({source_dir:f.root},"/",f.registry())).toThrow();
+  expect(()=>privateOptions({token_argv:["relative-provider"]},"/",f.registry())).toThrow();
+  writeFileSync(f.config,JSON.stringify([f.account,{...f.account,id:"unsafe",adapter_module:hostile}]));
+  const draft=await f.draft("safe-private");expect(existsSync(imported)).toBe(false);
+  await expect(callTool(f.binding,"hub_outbound",{action:"draft",request_key:"unsafe",account:"unsafe",target,text:"no"})).rejects.toThrow();
+  await approve(f,draft.object_id!);await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);
+  expect(f.calls()).toHaveLength(1);expect(existsSync(imported)).toBe(true);
+  expect((await outboundFindings(f.stage.as("hub_hub"),f.registry(),"mac",[DOOR])).some(x=>x.subject==="unsafe")).toBe(true);
+  chmodSync(f.config,0o644);
+  await expect(callTool(f.binding,"hub_outbound",{action:"inspect"})).rejects.toThrow();
+});
+
+test("held approvals tell the owner once and check reports them; external labels never ping", async () => {
+  const f=await fixture();const draft=await f.draft("held-notice");await approve(f,draft.object_id!);
+  writeFileSync(f.config,JSON.stringify([{...f.account,identity:"Rotated"}]));
+  await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);
+  expect((await f.stage.admin`select body from outbox where notice_key like 'outbound:%:held:%'`)).toHaveLength(1);
+  expect((await outboundFindings(f.stage.as("hub_hub"),f.registry(),"mac",[DOOR])).some(x=>x.says.includes("remains held"))).toBe(true);
+  writeFileSync(f.config,JSON.stringify([f.account]));
+  const mentions=await f.draft("mentions","exact",{target:{...target,label:"@everyone <@123> <@&456>"}});await approve(f,mentions.object_id!);
+  await deliverOutbound(f.stage.as("hub_door"),f.registry(),DOOR);
+  const rows=await f.stage.admin`select body from outbox where notice_key like 'outbound:%:sent'`;
+  expect(rows.some((r:any)=>r.body.includes("@\u200beveryone"))).toBe(true);
+  expect(rows.every((r:any)=>!/@(?:everyone|here|[0-9&])/.test(r.body))).toBe(true);
 });

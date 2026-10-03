@@ -17,10 +17,12 @@ interface Boundary {
   write: string[];
   deny: string[];
   git: string;
+  localRemotes: readonly string[];
+  remoteIdentities: Map<string, { dev: number; ino: number }>;
 }
 const active = new AsyncLocalStorage<Boundary>();
 const existing = (paths: string[]) => [...new Set(paths.filter(Boolean).filter(existsSync).map(path => realpathSync(path)))];
-const within = (root: string, path: string) => path === root || path.startsWith(`${root}/`);
+const within = (root: string, path: string) => root === "/" || path === root || path.startsWith(`${root}/`);
 
 let macGit: string | undefined;
 function developerGit(): string {
@@ -51,16 +53,19 @@ export async function inSyncIsolation<T>(registry: Registry, repo: RepositoryEnt
     ...listPeople(registry).filter(one => one.id !== repo.person).flatMap(one => [one.tree ?? "", state ? join(state, one.id) : ""]),
     ...listRepositories(registry).filter(one => one.person !== repo.person).map(one => one.path),
     secretsDirOf(registry) ?? "", backupStagingFor(registry) ?? "",
+    ...(readSetting(registry, "outbound.accounts_file") ? [dirname(String(readSetting(registry, "outbound.accounts_file")))] : []),
+    ...(process.platform === "darwin" ? ["/opt/homebrew/var", "/usr/local/var"] : []),
     ...listCredentials(registry).map(one => one.file), ...listRunEntries(registry).map(one => one.token_file ?? ""),
   ]).filter(path => path !== "/dev/null");
   const read = existing(repo.sync_read_paths ?? []);
+  if (read.includes("/")) throw new SyncIsolationUnavailable();
   const tree = realpathSync(person.tree);
   if (!within(tree, realpathSync(repo.path))) throw new SyncIsolationUnavailable();
   // A grant is not allowed to expose declared household secrets or another person's tree.
   if ([tree, ...read].some(path => denied.some(secret => within(path, secret) || within(secret, path)))) throw new SyncIsolationUnavailable();
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), "hub-sync-box-")));
   try {
-    return await active.run({ scratch, read, write: [tree], deny: denied, git: gitBinary() }, async () => {
+    return await active.run({ scratch, read, write: [tree], deny: denied, git: gitBinary(), localRemotes: repo.sync_local_remotes ?? [], remoteIdentities: new Map() }, async () => {
       const probe = isolatedGit(["-C", repo.path, "--version"]);
       try {
         const child = Bun.spawn(probe.argv, { cwd: repo.path, env: probe.env, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
@@ -71,15 +76,22 @@ export async function inSyncIsolation<T>(registry: Registry, repo: RepositoryEnt
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 }
 
-/** Called only after safeRemotes accepted every destination. This is not a grant from a config file. */
+/** URLs only select an owner-declared capability; mutable Git config never creates authority. */
 export function grantSyncRemotes(fetch: string, push: string[]): void {
   const boundary = active.getStore();
   if (!boundary) throw new SyncIsolationUnavailable();
-  for (const path of [fetch, ...push].filter(one => one.startsWith("/"))) {
-    if (boundary.deny.some(secret => within(path, secret) || within(secret, path))) throw new SyncIsolationUnavailable();
+  const locals = [...new Set([fetch, ...push].filter(one => one.startsWith("/")))];
+  // Validate the WHOLE set before adding any grant. Declarations must name their
+  // canonical path, not an agent-replaceable symlink that resolves elsewhere.
+  for (const path of locals) {
+    if (!boundary.localRemotes.includes(path) || realpathSync(path) !== path ||
+      boundary.deny.some(secret => within(path, secret) || within(secret, path))) throw new SyncIsolationUnavailable();
+    const identity = statSync(path);
+    if (!identity.isDirectory()) throw new SyncIsolationUnavailable();
+    boundary.remoteIdentities.set(path, { dev: identity.dev, ino: identity.ino });
   }
-  boundary.read.push(...existing([fetch].filter(one => one.startsWith("/"))));
-  boundary.write.push(...existing(push.filter(one => one.startsWith("/"))));
+  if (fetch.startsWith("/")) boundary.read.push(fetch);
+  boundary.write.push(...push.filter(one => one.startsWith("/")));
 }
 
 /** Trusted inherited process configuration only; no tokens, sockets, loaders or Git environment overrides enter the child. */
@@ -96,8 +108,12 @@ function environment(scratch: string): Record<string, string> {
 export function isolatedGit(args: string[]): { argv: string[]; env: Record<string, string> } {
   const b = active.getStore();
   if (!b) throw new SyncIsolationUnavailable();
+  for (const [path, expected] of b.remoteIdentities) {
+    const actual = statSync(path);
+    if (realpathSync(path) !== path || actual.dev !== expected.dev || actual.ino !== expected.ino) throw new SyncIsolationUnavailable();
+  }
   const system = process.platform === "darwin"
-    ? ["/usr", "/bin", "/sbin", "/System", "/Library/Developer", "/Library/Apple", "/private/etc", "/private/var/db", "/private/var/select", "/opt/homebrew"]
+    ? ["/usr", "/bin", "/sbin", "/System", "/Library/Developer", "/Library/Apple", "/private/etc", "/private/var/db", "/private/var/select", ...["bin","opt","Cellar","lib","libexec","share","etc/openssl@3"].map(dir=>`/opt/homebrew/${dir}`)]
     : ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc/ssl", "/etc/ssh", "/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf", "/etc/passwd", "/etc/group", "/etc/ld.so.cache"];
   const developer = process.platform === "darwin" ? developerGit() : "";
   const tools = [dirname(b.git), dirname(realpathSync(process.execPath)),

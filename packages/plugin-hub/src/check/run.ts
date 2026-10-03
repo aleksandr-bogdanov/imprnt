@@ -1,3 +1,4 @@
+import { outboundFindings } from "./outbound.ts";
 import { checkLoopSource } from "../adapters/index.ts";
 import type { LoopProbeOptions, LoopProbeTimeout } from "../adapters/launch.ts";
 import { acceptRepair, finding as findingLine, syncRepair, unitNotStopped } from "../door/lines.ts";
@@ -436,6 +437,8 @@ export async function runCheck(options: {
       now,
     }),
   );
+
+  findings.push(...await outboundFindings(options.store,registry,machine,entries.filter(e=>e.kind==="door").map(e=>e.id)));
 
   // --- every resident piece has a measured peak (criterion 6) --------------
   const peakRows = await readPeaks(options.store);

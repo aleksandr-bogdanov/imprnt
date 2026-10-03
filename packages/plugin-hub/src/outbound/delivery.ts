@@ -1,3 +1,5 @@
+import { generalOf } from "../registry/topics.ts";
+import { inert } from "../watch/record.ts";
 import { chatUsable } from "../store/topics.ts";
 import { randomUUID } from "node:crypto";
 import type { ApprovalHooks } from "../door/confirm.ts";
@@ -27,20 +29,45 @@ export async function bounded<T>(work: (signal: AbortSignal) => Promise<T>): Pro
   finally { clearTimeout(timer!); }
 }
 
+async function ownerRoute(store: StoreLike, registry: Registry, row: ConfirmationRow) {
+  const p=row.payload as Payload;
+  const own=listAgents(registry).find(a=>a.id===p.agent && a.person===row.person && a.door===row.door && a.chat===row.chat);
+  if(own && await chatUsable(store,row.door,row.chat)) return {agent:own.id,door:row.door,chat:row.chat};
+  const general=generalOf(registry,row.person);
+  if(general && await chatUsable(store,general.door,general.chat)) return {agent:general.id,door:general.door,chat:general.chat};
+  return null;
+}
+async function held(store: StoreLike, registry: Registry, row: ConfirmationRow, cause: string): Promise<void> {
+  await store.sql`update outbound_delivery set cause=${cause} where confirmation_id=${row.id} and state='queued'`;
+  const route=await ownerRoute(store,registry,row); if(!route) return;
+  await store.sql`select hub_door_notice(${row.person},${route.agent},
+    ${`Your approved message has not been sent: ${cause}. It is held until the account or route is repaired. Inspect the draft in your master chat for its exact state.`},
+    ${`outbound:${row.id}:held:${cause}`},${{door:route.door,chat:route.chat}}::jsonb,1)`;
+}
 async function notice(store: StoreLike, registry: Registry, row: ConfirmationRow, state: string): Promise<void> {
   const p = row.payload as Payload;
-  if (!listAgents(registry).some(a => a.id === p.agent && a.person === row.person && a.door === row.door && a.chat === row.chat) || !(await chatUsable(store, row.door, row.chat))) return;
-  const body = state === "sent" ? `Sent the approved message from ${p.identity} to ${p.target.label}.` :
+  const route=await ownerRoute(store,registry,row); if(!route) return;
+  const body = state === "sent" ? `Sent the approved message from ${inert(p.identity)} to ${inert(p.target.label)}.` :
     "The approved message's send result is uncertain. It will not be sent again automatically. Check the destination before preparing another message.";
-  await store.sql`select hub_door_notice(${row.person}, ${p.agent}, ${body}, ${`outbound:${row.id}:${state}`},
-    ${{ door: row.door, chat: row.chat }}::jsonb, 1)`;
+  await store.sql`select hub_door_notice(${row.person}, ${route.agent}, ${body}, ${`outbound:${row.id}:${state}`},
+    ${{ door: route.door, chat: route.chat }}::jsonb, 1)`;
   await store.sql`update outbound_delivery set notified=true where confirmation_id=${row.id} and state=${state}`;
 }
 
 /** At most one network attempt per approval, even across crashes, timeouts and concurrent doors. */
 export async function deliverOutbound(store: StoreLike, registry: Registry, door: string): Promise<void> {
   const accounts = accountsOf(registry); // Unreadable authority never becomes an empty/default account.
-  const rows = await store.sql`select confirmation_id, state from outbound_delivery where door = ${door} and (state = 'queued' or (state = 'sending' and updated_at < now() - interval '2 minutes') or (state in ('sent','uncertain') and not notified)) order by updated_at limit 20`;
+  // Advance durable scan order BEFORE inspecting a batch, including rows whose
+  // authority or notice route is held. Neither a crash nor one blocked account
+  // can pin the oldest twenty forever. updated_at remains the send-attempt clock.
+  const rows = await store.sql`with selected as (
+    select confirmation_id from outbound_delivery where door = ${door}
+      and (state = 'queued' or (state = 'sending' and updated_at < now() - interval '2 minutes')
+        or (state in ('sent','uncertain') and not notified))
+    order by checked_at, confirmation_id limit 20 for update skip locked
+  ) update outbound_delivery d set checked_at = clock_timestamp() from selected s
+    where d.confirmation_id = s.confirmation_id returning d.confirmation_id, d.state`;
+
   for (const delivery of rows) {
     const row = await readConfirmation(store, String(delivery.confirmation_id));
     if (!row || row.state !== "approved" || row.operation_kind !== OUTBOUND_SEND) continue;
@@ -57,15 +84,15 @@ export async function deliverOutbound(store: StoreLike, registry: Registry, door
     const origin = listAgents(registry).find(a => a.id === p.agent && a.person === row.person && a.door === door && a.chat === row.chat);
     if (!(await chatUsable(store, row.door, row.chat)) || !origin || !account || accountHash(account) !== p.config_hash || account.identity !== p.identity || p.person !== row.person ||
         !validTarget(p.target, account.platform) || !senderAllowed(registry, row.person, row.door, row.approved_by ?? "")) {
-      await store.sql`update outbound_delivery set cause = 'account-or-authority-changed' where confirmation_id = ${row.id} and state = 'queued'`;
+      await held(store,registry,row,"account-or-authority-changed");
       continue;
     }
     let adapter;
     try { adapter = await adapterFor(account); } catch {
-      await store.sql`update outbound_delivery set cause = 'adapter-unavailable' where confirmation_id = ${row.id} and state = 'queued'`; continue;
+      await held(store,registry,row,"adapter-unavailable"); continue;
     }
     if (!adapter.capabilities.includes(p.target.kind)) {
-      await store.sql`update outbound_delivery set cause = 'target-unsupported' where confirmation_id = ${row.id} and state = 'queued'`; continue;
+      await held(store,registry,row,"target-unsupported"); continue;
     }
     const attempt = randomUUID();
     const won = await store.sql`update outbound_delivery set state = 'sending', attempt_id = ${attempt}, cause = null, updated_at = now()

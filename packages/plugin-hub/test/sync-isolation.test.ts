@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startCluster, type Cluster } from "./helpers/cluster.ts";
 import { syncFixture } from "./helpers/rollout-sync.ts";
 import { fixtureGit } from "./helpers/rollout-git.ts";
 import { listRepositories } from "../src/registry/entries.ts";
-import { inSyncIsolation, isolatedGit } from "../src/sync/isolation.ts";
+import { inSyncIsolation, isolatedGit, grantSyncRemotes } from "../src/sync/isolation.ts";
 import { runSync } from "../src/sync/run.ts";
 
 let cluster: Cluster;
@@ -93,4 +93,41 @@ test("explicit credential helper and key remain usable; undeclared auth and inhe
     if (prior === undefined) delete process.env.HUB_SYNTHETIC_SECRET; else process.env.HUB_SYNTHETIC_SECRET = prior;
     await f.stop();
   }
+});
+
+test("repository URLs cannot enlarge owner-declared local remote capabilities", async () => {
+  const f = await syncFixture(cluster);
+  try {
+    const registry=f.registry(), repo=listRepositories(registry)[0];
+    const privateDir=join(f.root,"undeclared-private"); mkdirSync(privateDir);
+    const secret=join(privateDir,"secret"), marker=join(privateDir,"marker"), stolen=join(repo.path,"stolen");
+    writeFileSync(secret,"synthetic-private-data");
+    await inSyncIsolation(registry,repo,async()=>{
+      expect(()=>grantSyncRemotes(realpathSync(f.repos[0].remote),[realpathSync(privateDir)])).toThrow();
+      expect(()=>grantSyncRemotes(realpathSync(privateDir),[])).toThrow();
+      // A rejected URL never leaves a partial grant behind for a raced filter.
+      fixtureGit(repo.path,"config","filter.race.clean",`printf escaped > ${quote(marker)}; cat ${quote(secret)} > ${quote(stolen)}; cat`);
+      writeFileSync(join(repo.path,".gitattributes"),"*.txt filter=race\n"); writeFileSync(join(repo.path,"race.txt"),"content\n");
+      const added=await git(repo.path,["add","race.txt"]); expect(added.code,added.err).toBe(0);
+      expect(existsSync(marker)).toBe(false); expect(readFileSync(stolen,"utf8")).toBe("");
+    });
+    fixtureGit(repo.path,"config","--remove-section","filter.race");
+    fixtureGit(repo.path,"remote","set-url","--push","origin",privateDir);
+    const before=fixtureGit(repo.path,"rev-parse","HEAD");
+    await expect(runSync(f.entry(),f.registry())).rejects.toThrow();
+    expect(fixtureGit(repo.path,"rev-parse","HEAD")).toBe(before);
+  } finally {await f.stop();}
+});
+
+test("root read grants are refused and Mac toolchain access excludes Homebrew private var", async () => {
+  const f=await syncFixture(cluster);
+  try {
+    const registry=f.registry(), repo=listRepositories(registry)[0];
+    await expect(inSyncIsolation(registry,{...repo,sync_read_paths:["/"]},async()=>{})).rejects.toThrow();
+    if(process.platform==="darwin") await inSyncIsolation(registry,repo,async()=>{
+      const profile=isolatedGit([]).argv[2];
+      expect(profile).not.toContain('(allow file-read* (subpath "/opt/homebrew"))');
+      if(existsSync("/opt/homebrew/var")) expect(profile).toContain('(deny file-read* file-write* (subpath "/opt/homebrew/var"))');
+    });
+  } finally {await f.stop();}
 });
