@@ -77,7 +77,7 @@ export function observeGit(root: string) {
   const eventName = `hub-sync-test-${crypto.randomUUID()}.jsonl`;
   writeFileSync(config, "{}")
   writeFileSync(join(bin, "git"), `#!${process.execPath}
-import {appendFileSync,readFileSync,realpathSync,unlinkSync,statSync} from 'node:fs';
+import {appendFileSync,readFileSync,realpathSync,unlinkSync,statSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 const args=process.argv.slice(2), pid=process.pid;
 let cwd=process.cwd();
@@ -111,6 +111,8 @@ else {
   if(code===0 && after && after.verb===verb && here && (!after.arg || args.includes(after.arg))) {
     if(after.config) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'config',...after.config],{stdout:'ignore',stderr:'ignore'});
     if(after.remoteUrl) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'config','remote.origin.url',after.remoteUrl],{stdout:'ignore',stderr:'ignore'});
+    if(after.git) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'-c','user.name=p2','-c','user.email=p2@example.invalid','-c','commit.gpgsign=false',...after.git],{stdout:'ignore',stderr:'ignore'});
+    if(after.write) writeFileSync(join(cwd,after.write[0]),after.write[1]);
     if(after.remove) unlinkSync(join(cwd,after.remove));
     if(after.commit) Bun.spawnSync([${JSON.stringify(real)},'-C',cwd,'-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','-c','user.name=p2','-c','user.email=p2@example.invalid','commit','--no-verify','--quiet','-m','second writer'],{stdout:'ignore',stderr:'ignore'});
   }
@@ -122,7 +124,7 @@ say('end',code); process.exit(code);
     // `fail` refuses one verb with `exit` (73) after printing canned `stderr` and `stdout`, or dies of
     // `signal`. `after` acts once that verb has really succeeded, in the repository at `path`.
     control(value: { fail?: string; path?: string; noPush?: boolean; delay?: number; exit?: number; stderr?: string; stdout?: string;
-      signal?: string; after?: { verb: string; arg?: string; remove?: string; commit?: boolean; remoteUrl?: string; config?: [string, string] } }) { writeFileSync(config, JSON.stringify(value)) },
+      signal?: string; after?: { verb: string; arg?: string; remove?: string; commit?: boolean; remoteUrl?: string; config?: [string, string]; git?: string[]; write?: [string, string] } }) { writeFileSync(config, JSON.stringify(value)) },
     events(): GitEvent[] {
       // The observer is inside the real sandbox too: write telemetry only in this repository's writable Git metadata.
       const files = [...new Bun.Glob(`**/${eventName}`).scanSync({ cwd: root, dot: true, absolute: true })];
@@ -133,13 +135,13 @@ say('end',code); process.exit(code);
 }
 
 // A finite child lifetime also closes the store after an unsuccessful sync.
-export async function syncChild(f: SyncFixture, env: Record<string, string | undefined>, id = f.id, argv?: string[]) {
+export async function syncChild(f: SyncFixture, env: Record<string, string | undefined>, id = f.id, argv?: string[], now?: string) {
   const proc = Bun.spawn(argv ?? [process.execPath, "-e", `
 const {loadRegistry}=await import(${JSON.stringify(hubPath("src/registry/load.ts"))});
 const {listRunEntries}=await import(${JSON.stringify(hubPath("src/registry/entries.ts"))});
 const {runSync}=await import(${JSON.stringify(hubPath("src/sync/run.ts"))});
 const registry=loadRegistry(process.argv[1]);
-try { await runSync(listRunEntries(registry).find(e=>e.id===process.argv[2]),registry); process.exit(0); }
+try { await runSync(listRunEntries(registry).find(e=>e.id===process.argv[2]),registry,${now ? `{now:()=>new Date(${JSON.stringify(now)})}` : "undefined"}); process.exit(0); }
 catch(e) { console.error(e.message); process.exit(1); }
 `, f.registryFile, id], { env, stdout: "pipe", stderr: "pipe" })
   // The rehearsal sync measured max 2308 ms in 31 runs on the Linux box, so 15000 stays. One SD card stall took 10.4 s.

@@ -1105,6 +1105,8 @@ export function syncCause(language: Language, code: string): string {
     locked: ["repository is already being synchronized", "репозиторий уже синхронизируется"],
     config: ["repository config names a program, which the sync will not run: declare an ssh command in the registry entry, or use explicitly granted sync configuration", "в настройках репозитория указана программа, синхронизация её не запустит: укажите команду ssh в реестре или используйте явно разрешённые настройки синхронизации"],
     commit: ["committing the uncommitted changes failed", "не удалось сохранить несохранённые изменения"],
+    changed: ["repository branch or revision differs from the expected sync state", "ветка или версия репозитория не совпадает с ожидаемым состоянием синхронизации"],
+    operation: ["an unfinished Git operation or unresolved conflict needs attention", "незавершённая операция Git или конфликт требуют внимания"],
     branch: ["repository is on the wrong branch", "в репозитории выбрана другая ветка"],
     remote: ["configured remote is absent", "указанный удалённый репозиторий отсутствует"],
     fetch: ["fetch failed", "не удалось получить изменения"],
@@ -1126,15 +1128,13 @@ export function acceptRepair(language: Language, values: LineValues = {}): strin
 }
 
 /**
- * What a person reads when their vault has not synced for several runs in a
- * row. It names the repository and the last cause, because the fix is usually
- * one they can make, and says what is at stake: notes written since stay on
- * this machine only.
+ * What a person reads after thirty minutes of failed sync: the repository,
+ * current condition, what may remain local, and how to preserve pending work.
  */
 export function syncStuck(language: Language, values: LineValues = {}): string {
   const sentence = interpolate(language, language === "ru"
-    ? "синхронизация {target} не проходит, неудачных запусков подряд: {count}. Причина: {cause}. Новые заметки остаются только на этой машине, пока причина не устранена."
-    : "syncing {target} has failed {count} times in a row: {cause}. New notes stay on this machine only until that is fixed.", values);
+    ? "синхронизация {target} не проходит уже {minutes} мин. Сейчас: {cause}. Новые заметки могут оставаться только на этой машине. Остановите другие процессы, меняющие этот репозиторий, сохраните незавершённую работу и проверьте состояние Git перед повтором. Не сбрасывайте изменения и не удаляйте сохранённую работу."
+    : "syncing {target} has been failing for {minutes} minutes. Current condition: {cause}. New notes may remain only on this machine. Stop other writers, preserve pending work, and inspect Git state before retrying. Do not reset changes or discard saved work.", values);
   return says(language, sentence);
 }
 

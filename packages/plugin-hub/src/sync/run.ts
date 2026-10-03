@@ -371,7 +371,7 @@ function isCheckout(root: string, name: string): boolean {
  * is in neither the working tree nor the index any more, and naming it to
  * `add` would fail the run, and every run after it.
  */
-async function commitPending(path: string, nested: string[], code: string): Promise<number> {
+async function commitPending(path: string, nested: string[], code: string, guard: () => Promise<void>): Promise<number> {
   // Every untracked file is listed on its own, so the only directory status
   // names whole is a checkout of its own, which is left out. The paths are
   // handed over literally and on stdin: an excluding pathspec that names an
@@ -394,6 +394,7 @@ async function commitPending(path: string, nested: string[], code: string): Prom
   }
   if (changed.length === 0) return 0;
   if (toAdd.length > 0) {
+    await guard();
     await git(path, ["--literal-pathspecs", "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul"], code, "add",
       { input: toAdd.join("\0"), discard: true });
   }
@@ -406,52 +407,87 @@ async function commitPending(path: string, nested: string[], code: string): Prom
   const paths = (await git(path, ["diff", "--ignore-submodules=all", "--cached", "--no-renames", "--name-only", "-z"], code, "diff", { raw: true }))
     .split("\0").filter(name => listed.has(name));
   if (paths.length === 0) return 0;
+  await guard();
   await git(path, ["--literal-pathspecs", "-c", "user.name=imprnt hub", "-c", "user.email=hub@localhost", "-c", "commit.gpgsign=false",
     "commit", "--no-verify", "--quiet", "-m", `hub sync: ${paths.length} files`, "--pathspec-from-file=-", "--pathspec-file-nul"],
     code, "commit", { input: paths.join("\0"), discard: true });
   return paths.length;
 }
 
-/** How many failed runs in a row reach the person, not only the journal. */
-export const SYNC_NOTICE_AFTER_RUNS = 3;
+/** A persistent failure reaches the owner after elapsed time, independent of cadence. */
+export const SYNC_NOTICE_AFTER_MS = 30 * 60 * 1000;
 
 interface RepoResult {
   id: string; required: boolean; status: string; code?: string; cause?: string;
-  committed?: number; failed_runs?: number; failing_since?: string; diagnostic?: SyncDiagnostic;
+  committed?: number; failed_runs?: number; failing_since?: string; notified_at?: string; diagnostic?: SyncDiagnostic;
 }
 
 /**
  * Tell the repository's person, in their own chat, that it has not synced for
- * several runs. The notice is keyed on the start of the streak, so a run that
+ * at least thirty minutes. The notice is keyed on the start of the streak, so a run that
  * fails again says nothing new, and a streak that ends and starts again is a
  * new notice. A person with no chat agent has nowhere for it to land, and
  * `check` goes on reporting `sync-failed` for them.
  */
-async function noticeStuck(store: StoreLike, registry: Registry, entry: string, person: string, repo: RepoResult): Promise<void> {
+async function noticeStuck(store: StoreLike, registry: Registry, entry: string, person: string, repo: RepoResult, at: Date): Promise<boolean> {
   // The person's resident agent is the chat they keep open, the lair for the
   // owner and the main chat for anyone with one, so the notice lands where it
   // is read. A person with none gets it in their first chat.
   const chats = listAgents(registry).filter(one => one.person === person && one.chat !== undefined && one.door !== undefined);
   const agent = chats.find(one => one.mode === "resident") ?? chats[0];
   const where = agent ? noticeRoute(registry, agent.id) : null;
-  if (!agent || !where) return;
-  const body = syncStuck(where.language, { target: repo.id, count: repo.failed_runs, cause: syncCause(where.language, repo.code!) });
+  if (!agent || !where) return false;
+  const body = syncStuck(where.language, { target: repo.id, minutes: Math.floor((at.getTime() - Date.parse(repo.failing_since!)) / 60_000), cause: syncCause(where.language, repo.code!) });
   const key = `sync-stuck:${entry}:${repo.id}:${repo.failing_since}`;
   for (const [index, part] of prepareReply(body, where.platform, where.language).entries()) {
     await store.sql`select hub_door_notice(${person}, ${agent.id}, ${part}, ${index === 0 ? key : `${key}:part:${index + 1}`},
       ${where.route}::jsonb, ${index + 1})`;
   }
+  return true;
 }
 
 /** The advisory lock a sync of one checkout holds on one machine, keyed by the real path of its common git directory. A move takes the same one. */
 export const syncLockKey = (machine: string, commonDir: string): string => `sync:${machine}:${commonDir}`;
 
-export async function runSync(entry: RunEntry, registry: Registry): Promise<void> {
+class SyncGuardRefusal extends Error {
+  constructor(readonly code: "changed" | "operation") { super(code); }
+}
+
+/** Cooperative locks cannot fence an unrelated Git/file writer. These checks
+ * detect changed ownership/state at each boundary and never repair it. */
+async function checkoutGuard(path: string, gitDir: string, branch: string, expected?: string): Promise<string> {
+  const unfinished = () => ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"]
+    .some(one => existsSync(join(gitDir, one)));
+  if (unfinished() || await git(path, ["diff", "--ignore-submodules=all", "--name-only", "--diff-filter=U"], "operation", "unmerged")) throw new SyncGuardRefusal("operation");
+  let currentBranch: string;
+  try { currentBranch = await git(path, ["symbolic-ref", "--quiet", "HEAD"], "changed", "branch"); }
+  catch (error) { if (error instanceof GitFailure) throw new SyncGuardRefusal("changed"); throw error; }
+  const head = await git(path, ["rev-parse", "--verify", "HEAD^{commit}"], "changed", "tracking-ref");
+  if (currentBranch !== branch || (expected !== undefined && head !== expected)) throw new SyncGuardRefusal("changed");
+  if (unfinished()) throw new SyncGuardRefusal("operation");
+  return head;
+}
+
+/** Entry ownership includes result publication, so a contending tick cannot
+ * read stale streak state and later overwrite the active tick's success. */
+export const syncEntryLockKey = (entry: string): string => `sync-entry:${entry}`;
+
+export async function runSync(entry: RunEntry, registry: Registry, options: { now?: () => Date } = {}): Promise<void> {
   const declared = listRunEntries(registry).find(one => one.id === entry?.id && one.kind === "sync");
   if (!declared) throw new Error("sync-entry-unknown");
+  const now = options.now ?? (() => new Date());
   const store = await openStore({ url: storeUrlFor(registry, "hub_hub", declared.id) });
   const results: RepoResult[] = [];
+  let connection: Awaited<ReturnType<typeof store.sql.reserve>> | undefined;
+  const held: string[] = [];
   try {
+    connection = await store.sql.reserve();
+    const entryKey = syncEntryLockKey(declared.id);
+    const [owner] = await connection`select pg_try_advisory_lock(hashtextextended(${entryKey}, 0)) as held`;
+    // This invocation did no work. The running owner alone publishes its result;
+    // a skipped schedule neither clears nor advances a failure streak.
+    if (!owner.held) return;
+    held.push(entryKey);
     const previous = ((await readSheet(store, "sync")).find(row => row.id === declared.id)?.data.repositories ?? []) as RepoResult[];
     for (const repo of repositoriesFor(registry, declared.id)) {
       let committed = 0;
@@ -465,96 +501,98 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           code = "path";
           if (realpathSync(await git(path, ["rev-parse", "--show-toplevel"], code, "toplevel")) !== path) throw new Error(code);
           const identity = realpathSync(await git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], code, "common-dir"));
-          const connection = await store.sql.reserve();
-          let locked = false;
-          try {
-            code = "locked";
-            const [row] = await connection`select pg_try_advisory_lock(hashtextextended(${syncLockKey(declared.machine, identity)}, 0)) as held`;
-            locked = row.held;
-            if (!locked) throw new Error(code);
-            // Before any command that reads the working tree or dials the remote:
-            // git runs a filter's program while it compares file contents and a
-            // helper's while it fetches, so a key an agent wrote into the
-            // repository's config would run on the first such command.
-            code = "config";
-            if (await plantsProgram(path, code) !== null) throw new Error(code);
-            code = "branch";
-            const branchRef = `refs/heads/${repo.branch}`;
-            const trackingRef = `refs/remotes/${repo.remote}/${repo.branch}`;
-            await git(path, ["check-ref-format", branchRef], code, "branch");
-            await git(path, ["check-ref-format", trackingRef], code, "branch");
-            // Fetch follows a destination symref; do not let a tracking name point
-            // at a local branch or another namespace before applying the refspec.
-            if (await git(path, ["for-each-ref", "--format=%(symref)", trackingRef], code, "branch")) throw new Error(code);
-            if (await git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], code, "branch") !== repo.branch) throw new Error(code);
-            code = "remote";
-            if (!(await remoteStep("remote-list", () => git(path, ["remote"], code, "remote"))).split("\n").includes(repo.remote)) throw new Error(code);
-            const remote = await safeRemotes(path, repo.remote, registry, code);
-            grantSyncRemotes(remote.fetch, remote.push);
-            // A merge left half done is refused before anything is added: an
-            // `add` over conflict markers would commit them as the resolution.
-            code = "conflict";
-            const gitDir = await git(path, ["rev-parse", "--absolute-git-dir"], code, "git-dir");
-            if (["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"].some(one => existsSync(join(gitDir, one))) ||
-                await git(path, ["diff", "--ignore-submodules=all", "--name-only", "--diff-filter=U"], code, "unmerged")) throw new Error(code);
-            code = "commit";
-            const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
-            committed = await commitPending(path, nested, code);
-            code = "fetch";
-            // The registry's own ssh command for this repository, a deploy key
-            // above all, rides on the two calls that dial the remote.
-            const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
-            await git(path, ["fetch", "--no-recurse-submodules", "--", remote.fetch, `+${branchRef}:${trackingRef}`], code, "fetch", { config: dial, discard: true });
-            const fetched = await git(path, ["rev-parse", "--verify", `${trackingRef}^{commit}`], code, "tracking-ref");
-            code = "conflict";
-            await git(path, ["-c", "rebase.autoStash=false", "rebase", "FETCH_HEAD"], code, "rebase", { discard: true });
-            code = "push";
-            // Pin the exact revision sent to every destination. A concurrent HEAD
-            // change must not turn a different commit into apparently pushed work.
-            const pushed = await git(path, ["rev-parse", "--verify", "HEAD^{commit}"], code, "tracking-ref");
-            for (const destination of remote.push) {
-              await git(path, ["push", "--no-recurse-submodules", ...(isAbsolute(destination) ? ["--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack"] : []), "--", destination, `${pushed}:${branchRef}`], code, "push", { config: dial, discard: true });
-            }
-            // URL transports do not maintain the configured remote's tracking ref.
-            // Advance only after every push succeeds, and never follow a symref or
-            // overwrite a tracking ref changed by another writer since our fetch.
-            await git(path, ["update-ref", "--no-deref", trackingRef, pushed, fetched], code, "tracking-ref");
-          } finally {
-            try {
-              if (locked) await connection`select pg_advisory_unlock(hashtextextended(${syncLockKey(declared.machine, identity)}, 0))`;
-            } finally { connection.release(); }
+          code = "locked";
+          const key = syncLockKey(declared.machine, identity);
+          if (!held.includes(key)) {
+            const [row] = await connection!`select pg_try_advisory_lock(hashtextextended(${key}, 0)) as held`;
+            if (!row.held) throw new Error(code);
+            held.push(key);
           }
+          code = "config";
+          if (await plantsProgram(path, code) !== null) throw new Error(code);
+          code = "branch";
+          const branchRef = `refs/heads/${repo.branch}`;
+          const trackingRef = `refs/remotes/${repo.remote}/${repo.branch}`;
+          await git(path, ["check-ref-format", branchRef], code, "branch");
+          await git(path, ["check-ref-format", trackingRef], code, "branch");
+          if (await git(path, ["for-each-ref", "--format=%(symref)", trackingRef], code, "branch")) throw new Error(code);
+          const gitDir = await git(path, ["rev-parse", "--absolute-git-dir"], code, "git-dir");
+          let head = await checkoutGuard(path, gitDir, branchRef);
+          const guard = async () => { await checkoutGuard(path, gitDir, branchRef, head); };
+          code = "remote";
+          if (!(await remoteStep("remote-list", () => git(path, ["remote"], code, "remote"))).split("\n").includes(repo.remote)) throw new Error(code);
+          const remote = await safeRemotes(path, repo.remote, registry, code);
+          grantSyncRemotes(remote.fetch, remote.push);
+          code = "commit";
+          const nested = nestedIn(path, registry).map(one => `:(exclude,literal)${one}`);
+          committed = await commitPending(path, nested, code, guard);
+          if (committed) {
+            const created = await checkoutGuard(path, gitDir, branchRef);
+            // Our normal commit has exactly the head we checked as its parent.
+            const parent = await git(path, ["rev-list", "--parents", "-n", "1", created], "changed", "tracking-ref");
+            if (parent !== `${created} ${head}`) throw new SyncGuardRefusal("changed");
+            head = created;
+          }
+          code = "fetch";
+          const dial = repo.ssh_command === undefined ? [] : [`core.sshCommand=${repo.ssh_command}`];
+          await guard();
+          await git(path, ["fetch", "--no-recurse-submodules", "--", remote.fetch, `+${branchRef}:${trackingRef}`], code, "fetch", { config: dial, discard: true });
+          const fetched = await git(path, ["rev-parse", "--verify", `${trackingRef}^{commit}`], code, "tracking-ref");
+          code = "conflict";
+          await guard();
+          // FETCH_HEAD is shared mutable state. Rebase only the captured commit.
+          await git(path, ["-c", "rebase.autoStash=false", "rebase", fetched], code, "rebase", { discard: true });
+          head = await checkoutGuard(path, gitDir, branchRef);
+          code = "push";
+          for (const destination of remote.push) {
+            await guard();
+            await git(path, ["push", "--no-recurse-submodules", ...(isAbsolute(destination) ? ["--receive-pack=git -c core.hooksPath=/dev/null -c core.fsmonitor=false receive-pack"] : []), "--", destination, `${head}:${branchRef}`], code, "push", { config: dial, discard: true });
+          }
+          await guard();
+          await git(path, ["update-ref", "--no-deref", trackingRef, head, fetched], code, "tracking-ref");
+          await guard();
         });
         results.push({ id: repo.id, required: repo.required, status: "success", ...(committed ? { committed } : {}) });
       } catch (error) {
         if (error instanceof ConfigRefusal) code = "config";
         if (error instanceof SyncIsolationUnavailable) code = "isolation";
+        if (error instanceof SyncGuardRefusal) code = error.code;
         const cause = syncCause("en", code);
         const diagnostic = diagnosisOf(error, code);
-        // The streak carries over from the last run's row, so a failure that
-        // repeats every run is counted rather than only overwritten.
         const before = previous.find(one => one.id === repo.id && one.status === "failed");
         const failed_runs = (before ? before.failed_runs ?? 1 : 0) + 1;
-        const failing_since = before?.failing_since ?? new Date().toISOString();
+        const failing_since = before?.failing_since && Number.isFinite(Date.parse(before.failing_since)) ? before.failing_since : now().toISOString();
         results.push({ id: repo.id, required: repo.required, status: "failed", code, cause, failed_runs, failing_since,
+          ...(before?.notified_at ? { notified_at: before.notified_at } : {}),
           ...(committed ? { committed } : {}), ...(diagnostic ? { diagnostic } : {}) });
       }
     }
     const success = results.every(one => !one.required || one.status === "success");
-    const data = { machine: declared.machine, status: success ? "success" : "failed", repositories: results, at: new Date().toISOString() };
+    const at = now();
+    const data = { machine: declared.machine, status: success ? "success" : "failed", repositories: results, at: at.toISOString() };
     await store.sql.begin(async sql => {
       const transaction = { sql, url: store.url } as StoreLike;
-      await putRow(transaction, "sync", declared.id, data);
-      await appendEntry(transaction, { stream: "machine", subject: declared.id, kind: "sync", actor: "hub", detail: data });
       for (const repo of results) if (repo.status === "failed") {
         await recordOperationFailure(transaction, "sync", declared.id, repo.id,
           { kind: "permanent", code: `sync-${repo.code}`, cause: repo.cause!,
             ...(repo.diagnostic ? { detail: describe(repo.diagnostic) } : {}) }, "hub");
         const person = repositoriesFor(registry, declared.id).find(one => one.id === repo.id)?.person;
-        if (person && repo.failed_runs! >= SYNC_NOTICE_AFTER_RUNS) await noticeStuck(transaction, registry, declared.id, person, repo);
+        if (person && !repo.notified_at && at.getTime() - Date.parse(repo.failing_since!) >= SYNC_NOTICE_AFTER_MS &&
+            await noticeStuck(transaction, registry, declared.id, person, repo, at)) repo.notified_at = at.toISOString();
       }
+      // The notice marker and queued notice commit together. It survives outbox
+      // retention, so a later tick cannot notify again in the same streak.
+      await putRow(transaction, "sync", declared.id, data);
+      await appendEntry(transaction, { stream: "machine", subject: declared.id, kind: "sync", actor: "hub", detail: data });
       if (success) await recordJobSuccess(transaction, { entry: declared.id, machine: declared.machine, at: data.at });
     });
     if (!success) throw new Error("sync-failed");
-  } finally { await store.close(); }
+  } finally {
+    try {
+      if (connection) {
+        try { for (const key of held.reverse()) await connection`select pg_advisory_unlock(hashtextextended(${key}, 0))`; }
+        finally { connection.release(); }
+      }
+    } finally { await store.close(); }
+  }
 }
