@@ -11,6 +11,7 @@ import { AdapterMissing, FeedNotWritten, NativeRefusal, type Adapter, type Adapt
 import { credentialSource, type HubMcpServer } from "../adapters/launch.ts";
 import { boxContextFor } from "../box/index.ts";
 import { readTail, withBackground } from "../chatlog.ts";
+import { readSentryContext } from "../chatlog/sentry-context.ts";
 import { deriveTail } from "../chatlog/derive.ts";
 import { SAID_CAP } from "../harvest/parse.ts";
 import { thisOs } from "../os/index.ts";
@@ -2406,7 +2407,12 @@ export async function runRunner(options: {
           // THE HISTORY A FRESH MASTER CHILD IS OWED RIDES WITH THIS INPUT, and is read now so that this input
           // (claimed, so still waiting) is left out of it. It is background for the engine and only that: `text`
           // stays the input the conversation records and the attempt's digest names.
-          const background = contextOwed ? await readBackground(registry) : "";
+          const history = contextOwed ? await readBackground(registry) : "";
+          // Delivered Sentry notices are reference data on every real master chat input,
+          // including native resumes. They never become independent turns or job context.
+          const sentry = conversation.kind === "master" && row.kind === "human" && agent.chat !== undefined
+            ? await readSentryContext(store, { registry, person: agent.person, agent: agent.id, now: new Date(), asOf: new Date(row.received_at) }) : "";
+          const background = [history, sentry].filter(Boolean).join("\n");
           // THE RELOCATION NOTES a moved conversation still owes its next real input (never a job's): composed here, before the feed, from what the
           // store owes. A note that cannot be composed as declared is `MoveNoteRefused`, handed back below like any feed the move refused.
           const notes = row.kind === "job" ? [] : await notesOwedTo(store, agent.id, conversation.id);
