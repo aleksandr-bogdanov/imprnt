@@ -74,13 +74,19 @@ type Stage = "toplevel" | "common-dir" | "config" | "branch" | "remote" | "git-d
 type Reason = "index-lock" | "pathspec-missing" | "nothing-to-commit" | "permission" | "no-space"
   | "signal" | "spawn" | "internal" | "unknown";
 
+type RemotePhase = "remote-list" | "fetch-urls" | "push-urls" | "writable-roots" | "local-fetch" | "local-push";
+const EXCEPTION_TYPES = ["Error", "TypeError", "RangeError", "URIError", "SyntaxError", "ReferenceError", "EvalError", "AggregateError", "DOMException"] as const;
+type ExceptionType = typeof EXCEPTION_TYPES[number] | "unknown";
+
 /**
  * Where a run stopped and how, and nothing else: the step, the exit status or
  * the signal that ended it, and the reason's name. `local` is a failure outside
- * any git call, and `errno` is a standard code from the allowlist below.
+ * any git call, and `errno` is a standard code from the allowlist below. Remote
+ * exceptions add a closed phase/type label, never their message or filesystem path.
  */
 export interface SyncDiagnostic {
   stage: Stage | "local"; reason: Reason; exit?: number; signal?: string; errno?: string;
+  remote_phase?: RemotePhase; exception?: ExceptionType;
 }
 
 /** How much of a step's output is held while it is drained. */
@@ -88,7 +94,7 @@ const DIAGNOSTIC_BYTES = 16 * 1024;
 
 const SIGNALS = new Set(["SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGSEGV", "SIGPIPE", "SIGTERM"]);
 const ERRNOS = new Set(["ENOENT", "EACCES", "EPERM", "ENOMEM", "EMFILE", "ENFILE", "EAGAIN", "E2BIG", "ENOTDIR", "ELOOP",
-  "ENAMETOOLONG", "EIO", "ENOSPC"]);
+  "ENAMETOOLONG", "EIO", "ENOSPC", "EINVAL", "ENOTSUP", "ENXIO", "ETIMEDOUT"]);
 
 // The shapes git is known to give. The lock, the missing path and the empty
 // commit were reproduced against real git in a scratch repository (the empty
@@ -150,12 +156,34 @@ function errnoOf(error: unknown): string {
   return typeof named === "string" && ERRNOS.has(named) ? named : "unknown";
 }
 
+/** Attach only closed labels: exception messages and paths never leave this boundary. */
+class RemoteFailure extends Error {
+  readonly diagnostic: SyncDiagnostic;
+  constructor(phase: RemotePhase, error: unknown) {
+    super("remote");
+    const name = (error as { name?: unknown } | null)?.name;
+    const exception = EXCEPTION_TYPES.find(type => type === name) ?? "unknown";
+    this.diagnostic = error instanceof GitFailure
+      ? { ...error.diagnostic, remote_phase: phase }
+      : { stage: "local", reason: "internal", remote_phase: phase, exception, errno: errnoOf(error) };
+  }
+}
+
+async function remoteStep<T>(phase: RemotePhase, run: () => T | Promise<T>): Promise<T> {
+  try { return await run(); }
+  catch (error) {
+    // A deliberate refusal retains its existing meaning, without an internal-error diagnostic.
+    if (error instanceof Error && error.message === "remote" && !(error instanceof GitFailure)) throw error;
+    throw new RemoteFailure(phase, error);
+  }
+}
+
 /**
  * What a failure adds to the record. A refusal the sync made itself, which
  * throws its own code, is named by that code already and adds nothing.
  */
 function diagnosisOf(error: unknown, code: string): SyncDiagnostic | undefined {
-  if (error instanceof GitFailure) return error.diagnostic;
+  if (error instanceof GitFailure || error instanceof RemoteFailure) return error.diagnostic;
   if (error instanceof Error && error.message === code) return undefined;
   return { stage: "local", reason: "internal", errno: errnoOf(error) };
 }
@@ -165,6 +193,8 @@ function describe(one: SyncDiagnostic): string {
   if (one.exit !== undefined) parts.push(`exit=${one.exit}`);
   if (one.signal !== undefined) parts.push(`signal=${one.signal}`);
   if (one.errno !== undefined) parts.push(`errno=${one.errno}`);
+  if (one.remote_phase !== undefined) parts.push(`remote_phase=${one.remote_phase}`);
+  if (one.exception !== undefined) parts.push(`exception=${one.exception}`);
   return parts.join(" ");
 }
 
@@ -269,36 +299,44 @@ function localRemote(path: string, url: string): string | null {
  * remain valid. get-url expands the account's trusted insteadOf rewrites.
  */
 async function safeRemotes(path: string, remote: string, registry: Registry, code: string): Promise<{ fetch: string; push: string[] }> {
-  const state = readSetting(registry, "hub.state_dir");
-  // Mirror effective box grants, not just each person's primary tree. Claude
-  // rotates its login in the credential's parent; declared repositories can
-  // live outside that tree. Include inactive declarations conservatively too.
-  const granted = listPeople(registry).flatMap(person => [
-    ...(person.tree ? [person.tree] : []),
-    ...(typeof state === "string" && state ? [join(state, person.id)] : []),
-  ]);
-  granted.push(...listRepositories(registry).map(repo => repo.path).filter(Boolean));
-  granted.push(...listCredentials(registry).filter(credential => credential.kind === "claude-login")
-    .map(credential => dirname(credential.file)));
-  if (process.platform === "darwin") granted.push(...MAC_WRITABLE_SCRATCH);
-  const roots = [...new Set(granted)].map(root => ({ declared: resolve(root), real: canonical(resolve(root)) }));
-  const temporary = canonical(tmpdir());
-  // MCP grants only its per-launch directory, not all of tmpdir(). Protect the
-  // namespace without scanning: launches can create new directories at any time.
-  const scratch = (local: string) => {
-    const path = relative(temporary, local);
-    return inside(temporary, local) && [HUB_MCP_TEMP_PREFIX, LOOP_PROBE_TEMP_PREFIX]
-      .some(prefix => path.split("/")[0].startsWith(prefix));
+  // SSH-only sync must not touch unrelated local or automounted declarations.
+  let forbidden: ((local: string, real: string) => boolean) | undefined;
+  const writableRoots = () => {
+    const state = readSetting(registry, "hub.state_dir");
+    // Mirror effective box grants, not just each person's primary tree. Claude
+    // rotates its login in the credential's parent; declared repositories can
+    // live outside that tree. Include inactive declarations conservatively too.
+    const granted = listPeople(registry).flatMap(person => [
+      ...(person.tree ? [person.tree] : []),
+      ...(typeof state === "string" && state ? [join(state, person.id)] : []),
+    ]);
+    granted.push(...listRepositories(registry).map(repo => repo.path).filter(Boolean));
+    granted.push(...listCredentials(registry).filter(credential => credential.kind === "claude-login")
+      .map(credential => dirname(credential.file)));
+    if (process.platform === "darwin") granted.push(...MAC_WRITABLE_SCRATCH);
+    const roots = [...new Set(granted)].map(root => ({ declared: resolve(root), real: canonical(resolve(root)) }));
+    const temporary = canonical(tmpdir());
+    // MCP grants only its per-launch directory, not all of tmpdir(). Protect the
+    // namespace without scanning: launches can create new directories at any time.
+    return (local: string, real: string) => {
+      const path = relative(temporary, real);
+      return (inside(temporary, real) && [HUB_MCP_TEMP_PREFIX, LOOP_PROBE_TEMP_PREFIX]
+        .some(prefix => path.split("/")[0].startsWith(prefix))) ||
+        roots.some(root => inside(root.declared, local) || inside(root.real, real));
+    };
   };
   const resolved: string[][] = [];
   for (const push of [false, true]) {
     const destinations: string[] = [];
-    const urls = await git(path, ["remote", "get-url", "--all", ...(push ? ["--push"] : []), remote], code, "remote", { raw: true });
+    const urls = await remoteStep(push ? "push-urls" : "fetch-urls", () =>
+      git(path, ["remote", "get-url", "--all", ...(push ? ["--push"] : []), remote], code, "remote", { raw: true }));
     for (const url of urls.replace(/\n$/, "").split("\n")) {
-      const local = localRemote(path, url);
+      const phase = push ? "local-push" : "local-fetch";
+      const local = await remoteStep(phase, () => localRemote(path, url));
       if (local === null) { destinations.push(url); continue; }
-      const real = canonical(local);
-      if (scratch(real) || roots.some(root => inside(root.declared, local) || inside(root.real, real))) throw new Error(code);
+      forbidden ??= await remoteStep("writable-roots", writableRoots);
+      const real = await remoteStep(phase, () => canonical(local));
+      if (forbidden(local, real)) throw new Error(code);
       destinations.push(real);
     }
     resolved.push(destinations);
@@ -448,7 +486,7 @@ export async function runSync(entry: RunEntry, registry: Registry): Promise<void
           if (await git(path, ["for-each-ref", "--format=%(symref)", trackingRef], code, "branch")) throw new Error(code);
           if (await git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"], code, "branch") !== repo.branch) throw new Error(code);
           code = "remote";
-          if (!(await git(path, ["remote"], code, "remote")).split("\n").includes(repo.remote)) throw new Error(code);
+          if (!(await remoteStep("remote-list", () => git(path, ["remote"], code, "remote"))).split("\n").includes(repo.remote)) throw new Error(code);
           const remote = await safeRemotes(path, repo.remote, registry, code);
           // A merge left half done is refused before anything is added: an
           // `add` over conflict markers would commit them as the resolution.
