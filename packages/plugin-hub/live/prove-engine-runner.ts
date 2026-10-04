@@ -341,11 +341,14 @@ export function judge(facts: ProofFacts): { verdict: Verdict; failures: string[]
 
 export function promptsFor(markerPath: string): [string, string, string] {
   return [
-    `Use your file-reading tool to open the file ${markerPath}. It holds a single code word. Remember that code word, but do not write it, ` +
-      "quote it, spell it or hint at it anywhere in your reply. Reply with exactly one word: DONE",
-    "Не открывай никаких файлов и не используй никакие инструменты. Какое кодовое слово было в файле, который ты прочитал по моей первой просьбе? " +
-      "Ответь только этим словом.",
-    "Снова без файлов и без инструментов: назови то же кодовое слово ещё раз. Ответь только им.",
+    // The secrecy is THIS reply's only: a model told never to write the word refuses the recalls too (measured, Codex + MiniMax).
+    // And the read is spelled out as a required step: told only "use your tool", a model may answer DONE without one (measured, MiniMax).
+    `Step 1: call your file-reading tool now on the file ${markerPath}. Its content cannot be guessed, so you must actually read it. ` +
+      "Step 2: remember the single code word it holds; I will ask for it in a later message of this same conversation. " +
+      "In this reply only, do not write, quote, spell or hint at the code word. After reading, reply with exactly one word: DONE",
+    "Это продолжение нашего разговора. Не открывай никаких файлов и не используй никакие инструменты. Теперь напиши кодовое слово из " +
+      "файла, который ты прочитал по моей первой просьбе в этом разговоре: сейчас его уже можно писать. Ответь только этим словом.",
+    "Снова без файлов и без инструментов: напиши то же кодовое слово ещё раз, его можно писать. Ответь только им.",
   ];
 }
 
@@ -692,6 +695,8 @@ export async function runEngineProof(options: ProofOptions, log: (line: string) 
     facts.turns.push(facts1);
     if (!fake || !read || interrupted !== null) { facts1.outcome = interrupted !== null ? "aborted" : "not_sent"; return facts1; }
     const began = Date.now();
+    // Only posts made after this delivery are this turn's: an earlier reply with the same text ("DONE") is not a duplicate of it.
+    const postsBefore = fake.posts().length;
     const message = fake.deliver({ text, chat: ids.chat });
     if (message.sender_id !== FAKE_SENDER) {
       facts1.outcome = "aborted";
@@ -719,7 +724,8 @@ export async function runEngineProof(options: ProofOptions, log: (line: string) 
             const bodies = chunks.map(row => String(row.body));
             facts1.reply_chunks = bodies.length;
             facts1.reply_chars = bodies.reduce((total, body) => total + body.length, 0);
-            facts1.posts_per_chunk = bodies.map(body => fake!.posts().filter(post => post.chat === ids.chat && post.text === body).length);
+            const posted = fake!.posts().slice(postsBefore).filter(post => post.chat === ids.chat);
+            facts1.posts_per_chunk = bodies.map(body => posted.filter(post => post.text === body).length);
             facts1.marker_in_reply = bodies.some(body => markerIn(body, marker));
             facts1.marker_recalled = facts1.marker_in_reply;
             replies.push({ turn: n, chunks: bodies });
