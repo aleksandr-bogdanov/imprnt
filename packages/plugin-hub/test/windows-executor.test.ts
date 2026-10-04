@@ -254,12 +254,13 @@ test("the Windows CI job only runs when started by hand", () => {
 });
 
 const pwsh = Bun.which("pwsh");
-test.skipIf(pwsh === null)("the block parses with PowerShell's own parser (skipped: no pwsh on this machine)", () => scratch(dir => {
-  const out = join(dir, "errors.txt");
+// The errors come back on stdout: with none, Set-Content on an empty pipeline would write no file at all.
+test.skipIf(pwsh === null)("the block parses with PowerShell's own parser (skipped: no pwsh on this machine)", () => {
   const said = Bun.spawnSync([pwsh!, "-NoProfile", "-Command",
-    `$e=$null; $t=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${join(HUB, "tools/windows/executor-setup.ps1")}', [ref]$t, [ref]$e); $e | ForEach-Object { $_.ToString() } | Set-Content '${out}'; exit $e.Count`]);
-  expect({ code: said.exitCode, errors: readFileSync(out, "utf8") }).toEqual({ code: 0, errors: "" });
-}));
+    `$e=$null; $t=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${join(HUB, "tools/windows/executor-setup.ps1")}', [ref]$t, [ref]$e); $e | ForEach-Object { $_.ToString() }; exit $e.Count`],
+    { stdout: "pipe" });
+  expect({ code: said.exitCode, errors: said.stdout.toString() }).toEqual({ code: 0, errors: "" });
+});
 
 // The block's own control flow, end to end, under pwsh with a stand-in wsl.exe that runs nothing and
 // the Windows-only cmdlets stubbed (test/helpers/windows-dry-run). Not Windows, not WSL, and not
