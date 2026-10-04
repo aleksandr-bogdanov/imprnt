@@ -10,7 +10,8 @@
 //
 // Prints exactly one JSON line on stdout once `runRunner` has returned ({"ready":true,"pid":n}) or refused ({"ready":false,"error":...}).
 // SIGTERM or SIGINT: the production `stop()` (which closes every child it owns), then each session's own exit evidence, then exit 0. A
-// second signal does nothing; the parent's SIGKILL after its bound is the only way past a stop that hangs.
+// second signal does nothing; the parent's SIGKILL after its bound is the only way past a stop that hangs. With PROVE_STOP_ON_STDIN_EOF=1
+// the end of stdin is the same stop: a process started over ssh is stopped by closing its stdin, and is stopped too if the link drops.
 
 import { appendFileSync } from "node:fs";
 import { ADAPTERS } from "../src/adapters/index.ts";
@@ -77,5 +78,11 @@ const stop = async (): Promise<void> => {
 };
 process.on("SIGTERM", () => { void stop(); });
 process.on("SIGINT", () => { void stop(); });
+if (process.env.PROVE_STOP_ON_STDIN_EOF === "1") {
+  void (async () => {
+    try { for await (const _ of Bun.stdin.stream()) { /* nothing is read from it */ } } catch { /* an error is an end too */ }
+    void stop();
+  })();
+}
 
 await new Promise<void>(() => {});

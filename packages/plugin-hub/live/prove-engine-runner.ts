@@ -375,7 +375,7 @@ function spawnChild(args: string[], env: Record<string, string | undefined>, std
 }
 
 /** The child's one ready line, bounded. Its stdout keeps being drained afterwards so a full pipe never blocks it. */
-async function readyLine(stream: ReadableStream<Uint8Array>, boundMs: number): Promise<{ ready: boolean; pid?: number; error?: string }> {
+export async function readyLine(stream: ReadableStream<Uint8Array>, boundMs: number): Promise<{ ready: boolean; pid?: number; error?: string }> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let seen = "";
@@ -404,12 +404,12 @@ async function readyLine(stream: ReadableStream<Uint8Array>, boundMs: number): P
   }
 }
 
-function alive(pid: number): boolean {
+export function alive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 1) return false;
   try { process.kill(pid, 0); return true; } catch (error) { return (error as { code?: string }).code === "EPERM"; }
 }
 
-function readJournal(file: string): Observed[] {
+export function readJournal(file: string): Observed[] {
   if (!existsSync(file)) return [];
   const out: Observed[] = [];
   for (const line of readFileSync(file, "utf8").split("\n")) {
@@ -420,7 +420,7 @@ function readJournal(file: string): Observed[] {
 }
 
 /** Every engine process and group the production sessions recorded in one journal. */
-function recorded(lines: Observed[]): { pids: number[]; groups: number[] } {
+export function recorded(lines: Observed[]): { pids: number[]; groups: number[] } {
   const pids = new Set<number>();
   const groups = new Set<number>();
   for (const line of lines) {
