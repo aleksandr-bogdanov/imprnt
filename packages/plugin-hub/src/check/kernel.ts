@@ -1,6 +1,7 @@
 import { userInfo } from "node:os";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { findingId, type Finding } from "./finding.ts";
+import { readWslView, type WslView } from "../os/wsl.ts";
 
 /**
  * What the kernel could add, named as findings with the fix in them, while the
@@ -18,6 +19,8 @@ export interface KernelView {
   bootFile: string | null; // the boot file a household edits, or null where the box has none
   controllers: string[];  // the controllers the user slice delegates
   earlyoom: "active" | "inactive" | "absent";
+  /** The WSL guest this Linux is, or null/absent on every other machine. */
+  wsl?: WslView | null;
 }
 
 const CGROUP_FIX =
@@ -27,6 +30,10 @@ const CGROUP_FIX =
 const CGROUP_FIX_GENERIC =
   "the memory cgroup controller is not delegated to your user slice: enable cgroup v2 with the memory controller and Delegate=memory for user@.service, then reboot";
 const EARLYOOM_FIX = "sudo apt install earlyoom";
+// A WSL guest's kernel line is Windows' to set, in the account's .wslconfig, and
+// it applies to every distro of that account after `wsl.exe --shutdown`.
+const CGROUP_FIX_WSL =
+  "the memory cgroup controller is not delegated to your user slice: put kernelCommandLine = cgroup_no_v1=all under [wsl2] in %UserProfile%\\.wslconfig on Windows, then run wsl.exe --shutdown";
 
 /** The boot file a household edits, when the box has one, and the line it holds. */
 const BOOT_FILES = ["/boot/firmware/cmdline.txt", "/boot/cmdline.txt"];
@@ -101,6 +108,7 @@ export async function readKernelView(): Promise<KernelView | null> {
     controllers: delegated(),
     earlyoom: earlyoomState(),
     linger: existsSync(`/var/lib/systemd/linger/${userInfo().username}`),
+    wsl: readWslView(),
   };
 }
 
@@ -132,7 +140,7 @@ export function kernelFindings(view: KernelView | null, machine: string): Findin
       subject: "",
       machine,
       says,
-      fix: hasBootFile ? CGROUP_FIX : CGROUP_FIX_GENERIC,
+      fix: hasBootFile ? CGROUP_FIX : view.wsl ? CGROUP_FIX_WSL : CGROUP_FIX_GENERIC,
     });
   }
   if (view.earlyoom !== "active") {
@@ -144,6 +152,36 @@ export function kernelFindings(view: KernelView | null, machine: string): Findin
       says: `earlyoom is ${view.earlyoom}, so a box under memory pressure stalls instead of losing one process`,
       fix: EARLYOOM_FIX,
     });
+  }
+  out.push(...wslFindings(view.wsl ?? null, machine));
+  return out;
+}
+
+/**
+ * What a WSL guest leaves open around the box, each with the line that closes
+ * it. The box masks the interop sockets and the Windows drives on its own; the
+ * hub's own processes, its sync and anything else on the distro are not boxed,
+ * and the supported setup closes both at the distro.
+ */
+export function wslFindings(view: WslView | null, machine: string): Finding[] {
+  if (!view) return [];
+  // The distro is named by Windows, and a unit's environment does not carry the
+  // name, so the words are the same from the hub's tick and from a shell.
+  const restart = "then run wsl.exe --terminate <distro> from Windows (imprnt-hub when the Windows setup made it)";
+  const out: Finding[] = [];
+  const say = (kind: string, says: string, fix: string) =>
+    out.push({ id: findingId(machine, kind), kind, subject: "", machine, says, fix });
+  if (view.version === 1) {
+    say("wsl-version", "this WSL distro runs on WSL 1, which has no namespaces for the box and no systemd",
+      "run wsl.exe --set-version <distro> 2 from Windows");
+  }
+  if (view.interop.length > 0) {
+    say("wsl-interop-open", `this WSL distro can start Windows programs (${view.interop.join(", ")}), which run as the Windows account outside every box`,
+      `put enabled = false and appendWindowsPath = false under [interop] in /etc/wsl.conf, ${restart}`);
+  }
+  if (view.windowsMounts.length > 0) {
+    say("wsl-windows-mounts", `this WSL distro mounts Windows drives at ${view.windowsMounts.join(", ")}, which the hub's own processes can read`,
+      `put enabled = false under [automount] in /etc/wsl.conf, ${restart}`);
   }
   return out;
 }

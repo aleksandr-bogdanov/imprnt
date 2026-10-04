@@ -6,6 +6,7 @@ import { backupStagingFor, listAgents, listCredentials, listPeople, listReposito
 import { readSetting } from "../registry/load.ts";
 import { localRemotePath } from "../registry/remote.ts";
 import { secretsDirOf } from "../store/secrets.ts";
+import { readWslView, wslMaskPaths, type WslView } from "../os/wsl.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
 
 /**
@@ -380,7 +381,7 @@ function profilePath(ctx: BoxContext): string {
  * pid namespace and no sandbox rule produces one, so the process list is NOT
  * fenced there. The tree, its files and its origin are fenced on both.
  */
-export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): BoxedCommand {
+export function boxCommand(argv: string[], ctx: BoxContext, platform?: string, host: { wsl?: WslView | null } = {}): BoxedCommand {
   // A path is resolved to what it really is, so two spellings of one file are
   // one mask. A path the system will not resolve is used as it was written
   // rather than throwing: some sockets refuse the call, and a box that cannot be
@@ -398,6 +399,10 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
   // machine's command. Unnamed, it is the one this process is running on.
   const flavour = String(platform ?? process.platform);
   if (flavour === "linux") {
+    // On a WSL guest, what WSL itself opens around Linux. Read off this machine
+    // unless the caller supplied it, and nothing anywhere else.
+    const wsl = wslMaskPaths(Object.hasOwn(host, "wsl") ? host.wsl ?? null : readWslView(),
+      [ctx.tree, ctx.stateRoot ?? "", ctx.sessionDir ?? "", ...(ctx.readPaths ?? []), ...(ctx.writePaths ?? [])]);
     return {
       tool: "bwrap",
       argv: [
@@ -464,6 +469,11 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // needs is there. Skipped where it is not there, for the same reason the
         // other-tree masks are: nothing to hide, and no way to create it.
         ...RUNTIME_MASKS.filter(existsSync).flatMap(path => ["--tmpfs", path]),
+        // A WSL guest's ways out of Linux: the interop sockets a Windows program
+        // is started through, which then runs outside the box as the Windows
+        // account, the folder every distro of that account shares, WSLg's display
+        // and every mounted Windows drive. Empty on every other machine.
+        ...wsl.flatMap(path => ["--tmpfs", path]),
         // The docker socket and the X authority cookie, each covered with
         // /dev/null. A path that is not on this box is skipped, and the two
         // spellings of the socket are one path once the symlink is resolved.
