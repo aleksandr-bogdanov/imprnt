@@ -14,14 +14,13 @@
 // that says nothing about what the board asked the operating system to do.
 
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { loadRegistry, type RunEntry } from "../../src/registry/load.ts";
-import { listPeople, listRunEntries } from "../../src/registry/entries.ts";
+import { listRunEntries } from "../../src/registry/entries.ts";
 import type { MemoryReading, OsSeam, UnitState } from "../../src/os/types.ts";
 import { unitName } from "../../src/os/names.ts";
 import type { StoreLike } from "../../src/store/connect.ts";
-import { boardAuthPath } from "../../src/board/auth.ts";
 import { hubPath } from "./cluster.ts";
 
 /**
@@ -72,28 +71,14 @@ export interface ServedBoard {
   stop(): Promise<void>;
 }
 
-/** Legacy peer fixture, deliberately irrelevant to credential authorization. */
+/**
+ * The peer a request is taken to come from by default: another device on the
+ * tailnet, in the documentation range, so the in-process board accepts an act
+ * the way it accepts one from a phone. `peer: "production"` asks the server's
+ * own reader instead, which answers this machine for a check in this runtime,
+ * and the board refuses every act from there.
+ */
 export const ANOTHER_DEVICE = "192.0.2.10";
-export const BOARD_TEST_TOKEN = "a".repeat(64);
-export const BOARD_AUTH = `Basic ${Buffer.from(`test-owner:${BOARD_TEST_TOKEN}`).toString("base64")}`;
-export const BOARD_READER_AUTH = `Basic ${Buffer.from(`test-reader:${"b".repeat(64)}`).toString("base64")}`;
-export const BOARD_OTHER_AUTH = `Basic ${Buffer.from(`test-other:${"c".repeat(64)}`).toString("base64")}`;
-
-/** Disposable credentials for the in-process and subprocess board fixtures. */
-export function provisionBoardAuth(registryFile: string, entryId: string): void {
-  const entry = listRunEntries(loadRegistry(registryFile)).find(one => one.id === entryId)!;
-  const registry = loadRegistry(registryFile, { machine: entry.machine });
-  const people = listPeople(registry);
-  const file = boardAuthPath(registry, entry)!;
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  chmodSync(dirname(file), 0o700);
-  const accounts = [
-    { id: "test-owner", person: people[0].id, role: "operator", token_sha256: createHash("sha256").update(BOARD_TEST_TOKEN).digest("hex") },
-    { id: "test-reader", person: people[0].id, role: "reader", token_sha256: createHash("sha256").update("b".repeat(64)).digest("hex") },
-    ...(people[1] ? [{ id: "test-other", person: people[1].id, role: "reader", token_sha256: createHash("sha256").update("c".repeat(64)).digest("hex") }] : []),
-  ];
-  writeFileSync(file, JSON.stringify({ version: 1, accounts }), { mode: 0o600 });
-}
 
 export interface ServeBoardOptions {
   registryFile: string;
@@ -109,8 +94,6 @@ export interface ServeBoardOptions {
    */
   peer?: unknown;
   now?: () => Date;
-  /** False exercises an unprovisioned board. Otherwise use disposable private credentials. */
-  auth?: boolean;
 }
 
 /**
@@ -137,7 +120,6 @@ export async function serveBoard(options: ServeBoardOptions): Promise<ServedBoar
     if (!found) throw new Error(`${options.registryFile} carries no [[run]] entry ${options.entryId}`);
     return found;
   };
-  if (options.auth !== false) provisionBoardAuth(options.registryFile, options.entryId);
   const start = async () =>
     await runBoard({
       entry: entryOf(),
@@ -173,16 +155,12 @@ export async function serveBoard(options: ServeBoardOptions): Promise<ServedBoar
     artifactsUrl: handle.artifactsUrl,
     artifactsPort: handle.artifactsPort,
     artifact: (path, init) => fetch(atArtifacts(path), { redirect: "manual", ...(init ?? {}) }),
-    get: (path, init) => {
-      const headers = new Headers({ authorization: BOARD_AUTH });
-      new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
-      return fetch(at(path), { redirect: "manual", ...(init ?? {}), headers });
-    },
+    get: (path, init) => fetch(at(path), { redirect: "manual", ...(init ?? {}) }),
     post: (path, form = {}) =>
       fetch(at(path), {
         method: "POST",
         redirect: "manual",
-        headers: { "content-type": "application/x-www-form-urlencoded", authorization: BOARD_AUTH },
+        headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(form).toString(),
       }),
     stop: () => handle.stop(),

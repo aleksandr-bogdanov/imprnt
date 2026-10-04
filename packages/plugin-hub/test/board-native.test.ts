@@ -35,7 +35,7 @@ import { stageHub, superStore, type StagedHub } from "./helpers/hub-fixture.ts";
 import { announceGate, gateSuffix, osGate, thisMachine } from "./helpers/os-gate.ts";
 import { pidAlive } from "./helpers/manager.ts";
 import { unitFixture, type UnitFixture } from "./helpers/units.ts";
-import { BOARD_AUTH, provisionBoardAuth, freePort, setOnEntry } from "./helpers/board.ts";
+import { freePort, setOnEntry } from "./helpers/board.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import type { OsSeam } from "../src/os/types.ts";
 import type { Finding } from "./helpers/finding.ts";
@@ -155,7 +155,6 @@ async function stageBoard(options: { bind?: string; stopped?: boolean } = {}): P
   const { thisOs } = await seam("src/os/index.ts");
   const os = (thisOs as Function)({ unitDir: fixture.unitDir() }) as OsSeam;
   const entry = listRunEntries(loadRegistry(it.registryFile)).find((one) => one.id === entryId)!;
-  provisionBoardAuth(it.registryFile, entryId);
   const context = {
     machine: MACHINE.id,
     execPath: process.execPath,
@@ -255,7 +254,7 @@ test.skipIf(!gate.ok)(
         "the board the manager started answered its first page",
         async () => {
           try {
-            return (await fetch(url, { redirect: "manual", headers: { authorization: BOARD_AUTH } })).status === 200;
+            return (await fetch(url, { redirect: "manual" })).status === 200;
           } catch {
             return false;
           }
@@ -434,7 +433,7 @@ test.skipIf(!gate.ok)(
         "the board the manager started answered its first page",
         async () => {
           try {
-            return (await fetch(url, { redirect: "manual", headers: { authorization: BOARD_AUTH } })).status === 200;
+            return (await fetch(url, { redirect: "manual" })).status === 200;
           } catch {
             return false;
           }

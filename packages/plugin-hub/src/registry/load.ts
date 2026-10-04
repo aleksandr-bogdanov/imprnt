@@ -11,6 +11,7 @@ import {
   boardBindMissing,
   boardBindNotAddress,
   boardBindWide,
+  boardHosts,
   boardPort,
   enabledNotBoolean,
   enabledOnBoard,
@@ -437,6 +438,19 @@ export interface RunEntry {
    * at all, which is what a household that has not asked for the route gets.
    */
   artifacts_port?: number;
+  /**
+   * The names this board is also opened by, besides its bind address: a
+   * machine's short tailnet name and its full one, for example
+   * `["hub-device", "hub-device.example.ts.net"]`.
+   *
+   * EXACT NAMES, NEVER A PATTERN. A request is served when its `Host` is the
+   * bind address or one of these names, letter case aside, with the board's own
+   * port. Nothing is resolved and nothing matches by suffix: a name a household
+   * did not write here is a name a website could have pointed at this address,
+   * and it is refused exactly as before. Absent means the address alone, and the
+   * loader carries the names in lower case.
+   */
+  hosts?: string[];
   /**
    * The recognizer's other two. `residency` says whether the model is held
    * between notes or dropped after `idle_seconds` of quiet, and only the one
@@ -1025,6 +1039,19 @@ function describeBare(value: unknown): string {
 }
 
 /**
+ * Whether a text is one exact host name: dot-separated labels of letters,
+ * digits and inner hyphens, at most 63 characters each and 253 in all, the last
+ * one not all digits, because a browser reads such a name as an IPv4 address
+ * and sends the address instead. No wildcard, no port, no trailing dot.
+ */
+function isHostName(text: string): boolean {
+  if (text.length === 0 || text.length > 253 || isIP(text) !== 0) return false;
+  const labels = text.split(".");
+  if (/^\d+$/.test(labels[labels.length - 1])) return false;
+  return labels.every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label));
+}
+
+/**
  * The key a reader asks for, with any command-line decoration taken off: a
  * leading dash run and anything glued on after an `=`. The spelling is all that
  * is stripped. The value that came with it is dropped on the floor and the
@@ -1469,6 +1496,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     // The address and the port, asked of a BOARD entry and of nothing else.
     // The loader tolerates either key on another kind the way it tolerates any
     // key it has no rule about.
+    let hostNames: string[] | undefined;
     if (entry.kind === "board") {
       const bind = entry.bind;
       if (bind === undefined || bind === null || bind === "") {
@@ -1517,6 +1545,20 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           shows === port)
       ) {
         refuse(`${at}.artifacts_port`, here, boardArtifactsPort("en", { id, value: describeBare(shows) }));
+      }
+      // The names it is also opened by, each one exact. A wildcard, a suffix, a
+      // port, a trailing dot and an address are refused rather than read as
+      // something nearby: what this list admits is a Host a website cannot
+      // choose, and a pattern is a Host a website can.
+      const hosts = entry.hosts;
+      if (hosts !== undefined && hosts !== null) {
+        if (!Array.isArray(hosts) || !hosts.every((one) => typeof one === "string" && isHostName(one))) {
+          refuse(`${at}.hosts`, here, boardHosts("en", {
+            id,
+            value: Array.isArray(hosts) ? JSON.stringify(hosts) : describeBare(hosts),
+          }));
+        }
+        hostNames = [...new Set((hosts as string[]).map((one) => one.toLowerCase()))];
       }
     }
 
@@ -1854,6 +1896,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         : entry.kind === "backup" ? ["destination", "standalone_dump", ...BACKUP_ARGVS, ...BACKUP_RETENTION_ARGVS]
         : entry.kind === "watch" ? ["source", "person", ...SENTRY_KEYS, ...HUNT_KEYS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
+      ...(hostNames === undefined ? {} : { hosts: hostNames }),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
   });

@@ -32,6 +32,7 @@ import type { OsSeam } from "../src/os/types.ts";
 import type { Store } from "../src/store/connect.ts";
 import { runHub } from "../src/hub/run.ts";
 import { CHECK_SHEET } from "../src/check/run.ts";
+import { requestCause } from "../src/board/plain.ts";
 import {
   actRefused,
   actRequested,
@@ -249,11 +250,12 @@ test(
 
       const rows = await controlRows(it);
       expect(rows).toHaveLength(1);
-      expect(rows[0].data.actor).toBe("board:test-owner");
+      expect(rows[0].data.actor).toBe("board");
       expect(rows[0].data.source).toBe("board");
       expect(rows[0].data.target_kind).toBe("run");
       expect(rows[0].data.target_id).toBe(RUNNER_ENTRY.id);
-      // The actor names the authenticated account; no unrelated chat identity is invented.
+      // Nobody on a tailnet page is identified, and the row says so: no account
+      // and no chat identity is invented for the press.
       expect(rows[0].data.operator).toBeUndefined();
       expect(rows[0].data.chat).toBeUndefined();
 
@@ -297,7 +299,9 @@ test(
       for (const target of [HUB_ENTRY.id, staged.boardEntry.id]) {
         const pressed = await press(board, "/act/restart", { target });
         expect(pressed.status).toBe(303);
-        expect(pressed.landed).toContain(actRefused("en", { target, cause: "invalid-recovery-target" }));
+        expect(pressed.landed).toContain(actRefused("en", { target, cause: requestCause("invalid-recovery-target") }));
+        // The refusal is said in words, never as its code.
+        expect(pressed.landed).not.toContain("invalid-recovery-target");
       }
       expect(await controlRows(it)).toEqual([]);
 
@@ -393,7 +397,7 @@ test(
       // changes no file: the writer is never reached.
       const pressed = await press(staged.board, "/act/enabled", { target: HUB_ENTRY.id, value: "false" });
       expect(staged.writes, "a hand-written form reached the registry writer").toEqual([]);
-      expect(pressed.landed).toContain(actRefused("en", { target: HUB_ENTRY.id, cause: "enabled-not-for-this-kind" }));
+      expect(pressed.landed).toContain(actRefused("en", { target: HUB_ENTRY.id, cause: requestCause("enabled-not-for-this-kind") }));
     } finally {
       await staged.stop();
     }

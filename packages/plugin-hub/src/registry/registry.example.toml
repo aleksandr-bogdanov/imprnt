@@ -459,6 +459,12 @@ schedule = "always"
 memory_limit_mb = 128
 bind = "100.64.0.1"
 port = 8794
+# The names this board is also opened by, besides the address above: this
+# machine's short tailnet name and its full one. EXAMPLES, like the address.
+# Each is matched exactly, letter case aside, and with the port above: no
+# wildcard, no suffix, nothing resolved. A name not listed is refused as a
+# foreign one is. Leave the line out and only the address opens the board.
+hosts = ["hub-device", "hub-device.example.ts.net"]
 # A person's artifacts are served on a SECOND port, which is a second origin. An
 # agent writes what is served there, and a page it wrote, opened from a chat
 # link on the port the acts are on, would be the board's own origin: its script

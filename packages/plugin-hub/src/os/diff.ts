@@ -255,8 +255,8 @@ export function resetCommand(flavour: "systemd" | "launchd" | string, unit: stri
   return `systemctl --user reset-failed ${unit}`;
 }
 
-/** A path as one shell word, quoted only when it must be. */
-function shellWord(text: string): string {
+/** A path as one shell word, quoted only when it must be. The board fills `check`'s commands with it too. */
+export function shellWord(text: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`;
 }
 

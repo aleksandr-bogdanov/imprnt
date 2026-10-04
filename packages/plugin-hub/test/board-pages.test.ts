@@ -40,7 +40,8 @@ import { readStampMetrics } from "../src/metrics/stamps.ts";
 import { readUsage } from "../src/board/usage.ts";
 import { renderChatText } from "../src/board/markup.ts";
 import { findingId } from "../src/check/finding.ts";
-import { cardBroken, cardOk, cardWaiting, pageMissing } from "../src/door/lines.ts";
+import { cardQueued, cardWaiting, chatHealthy, chatStuck, pageMissing } from "../src/door/lines.ts";
+import { mib } from "../src/board/plain.ts";
 
 const SLOW = 120_000;
 const HERE = process.platform === "darwin" ? "mac" : "pi";
@@ -61,10 +62,15 @@ const PAGES = ["/", "/people", "/chats", "/usage", "/findings", "/metrics"] as c
  * these is what this check exists to catch.
  */
 const READERS: Record<string, { what: string; sql: RegExp }[]> = {
-  "/": [{ what: "a state sheet: the check sheet, the peaks and the control sheet", sql: /from state_row/ }],
+  "/": [
+    { what: "a state sheet: the check sheet, the peaks, the control sheet, agent health and door health", sql: /from state_row/ },
+    { what: "readRemoteFacts: the other machine's entries on the store's client list", sql: /jsonb_to_recordset[\s\S]*pg_stat_activity|pg_stat_activity[\s\S]*jsonb_to_recordset/ },
+    { what: "readTurnStates: every agent's open rows in one statement, for the first screen's chat lines", sql: /from inbound i/ },
+  ],
   "/people": [
     { what: "a state sheet: agent health, door health and the check sheet", sql: /from state_row/ },
-    { what: "readOpenTurns", sql: /from inbound/ },
+    { what: "readTurnStates: every agent's open rows in one statement", sql: /from inbound i/ },
+    { what: "readApprovals: the owner's confirmations counted per chat", sql: /from confirmation/ },
   ],
   "/findings": [{ what: "the check sheet", sql: /from state_row/ }],
   "/metrics": [
@@ -276,12 +282,15 @@ test(
             `${path} issued a statement no named reader of that page issues:\n${line}`,
           ).toBe(true);
         }
-        // The count, beside the shapes: the machines page reads three sheets
-        // (the findings, the peaks, and the control rows that say what came of
-        // an act), the findings page reads one, the people page reads three
-        // plus one open turn read per agent, and the metrics page is its two
-        // statements.
-        const expected: Record<string, number> = { "/": 3, "/people": 5, "/findings": 1, "/metrics": 2, "/chats": 0, "/usage": 2 };
+        // The count, beside the shapes: the first screen reads five sheets
+        // (the findings, the peaks, the control rows that say what came of an
+        // act, and the agent and door health its chat lines need), one
+        // statement for the other machine's entries and ONE read of every
+        // agent's open rows; the findings page reads one (the registry sheet
+        // only when a command on it has a file to fill in, which none here
+        // has), the people page reads three sheets, the open rows and the
+        // approvals, and the metrics page is its two statements.
+        const expected: Record<string, number> = { "/": 7, "/people": 5, "/findings": 1, "/metrics": 2, "/chats": 0, "/usage": 2 };
         expect(lines.length, `${path} issued:\n${lines.join("\n")}`).toBe(expected[path]);
       }
 
@@ -362,12 +371,14 @@ test(
 
       // The other machine, from its sheet, with what the sheet said and when.
       expect(text).toContain(THERE_ENTRY.id);
-      expect(text).toContain(`${THERE_ENTRY.id} has been started again 4 times`);
+      // The sheet's sentence, less the subject printed beside it.
+      expect(text).toContain(">has been started again 4 times<");
       expect(text).toContain("unit-missing");
 
-      // The peak beside the limit, both by value.
-      expect(text).toContain("456123000");
-      expect(text).toContain(String(RUNNER_ENTRY.memory_limit_mb));
+      // The peak beside the limit, both by value, in one unit.
+      expect(text).toContain(mib(456_123_000)!);
+      expect(mib(456_123_000)).toBe("435.0 MiB");
+      expect(text).toContain(`${RUNNER_ENTRY.memory_limit_mb} MiB`);
 
       // A resident with NO peak row shows the absence rather than a zero,
       // because a zero in a table a person reads is a claim.
@@ -396,13 +407,13 @@ test(
         return /<td[^>]*class="word"[^>]*>([^<]*)<\/td>/.exec(found)?.[1] ?? `no sentence at all in: ${found}`;
       };
 
-      // Nothing planted at all: the card says idle, in one word, and never
-      // the three words a card used to carry.
-      expect(await wordOn("p1-lair")).toBe(cardOk("en"));
-      expect(cardOk("en")).toBe("idle");
+      // The people page says the same one state the first screen says.
+      // Nothing planted at all: healthy, and never the words a card used to carry.
+      expect(await wordOn("p1-lair")).toBe(chatHealthy("en"));
       for (const word of ["ok", "waiting", "broken", "owed"]) expect(await wordOn("p1-lair")).not.toBe(word);
 
-      // A finding about this person's agent, and the word flips.
+      // A finding about this person's agent, and the state flips: said once,
+      // as the state it is, without the agent's own name the row is headed by.
       const said = await plantFinding(it, {
         machine: HERE,
         kind: "agent-retry",
@@ -410,25 +421,25 @@ test(
         says: "p1-lair is retrying",
         fix: "imprnt hub recover <registry> agent:p1-lair",
       });
-      // The finding's own sentence, and not a word about it.
-      expect(await wordOn("p1-lair")).toBe(cardBroken("en", { says: "p1-lair is retrying" }));
-      expect(await wordOn("p1-lair")).toBe("p1-lair is retrying");
+      expect(await wordOn("p1-lair")).toBe("retrying");
       // And the other person is untouched by it.
-      expect(await wordOn("p2-lair")).toBe(cardOk("en"));
+      expect(await wordOn("p2-lair")).toBe(chatHealthy("en"));
 
       // Removed, and it goes back. The page holds no opinion of its own to
       // remember.
       await removeFinding(it, said);
-      expect(await wordOn("p1-lair")).toBe(cardOk("en"));
+      expect(await wordOn("p1-lair")).toBe(chatHealthy("en"));
 
-      // An open turn and no finding is answering, with the count.
+      // An open message nothing has picked up is QUEUED, with the count, and
+      // never "answering": no attempt is running, so nothing is.
       await insertInbound(cluster, it.db, { id: "open-one", body: "a question nobody answered" });
-      expect(await wordOn("p1-lair")).toBe(cardWaiting("en", { count: 1 }));
-      expect(await wordOn("p1-lair")).toBe("answering 1 message");
+      expect(await wordOn("p1-lair")).toBe(cardQueued("en", { count: 1 }));
+      expect(await wordOn("p1-lair")).toBe("1 message waiting to be picked up");
+      expect(await wordOn("p1-lair")).not.toContain(cardWaiting("en", { count: 1 }));
       await insertInbound(cluster, it.db, { id: "open-one-more", body: "and another" });
-      expect(await wordOn("p1-lair")).toBe("answering 2 messages");
+      expect(await wordOn("p1-lair")).toBe("2 messages waiting to be picked up");
 
-      // Both, and broken outranks waiting.
+      // Both, and the finding outranks waiting.
       await plantFinding(it, {
         machine: HERE,
         kind: "agent-retry",
@@ -436,13 +447,13 @@ test(
         says: "p1-lair is retrying",
         fix: "imprnt hub recover <registry> agent:p1-lair",
       });
-      expect(await wordOn("p1-lair")).toBe("p1-lair is retrying");
+      expect(await wordOn("p1-lair")).toBe("retrying");
 
       // A finding about the person's DOOR is their sentence too, because a
       // door that cannot be read is a person who is not being answered.
       await removeFinding(it, said);
       await insertInbound(cluster, it.db, { id: "open-two", body: "another question", person: "p2", agent: "p2-lair" });
-      expect(await wordOn("p2-lair")).toBe(cardWaiting("en", { count: 1 }));
+      expect(await wordOn("p2-lair")).toBe(cardQueued("en", { count: 1 }));
       await plantFinding(it, {
         machine: HERE,
         kind: "chat-unreadable",
@@ -450,7 +461,7 @@ test(
         says: "the chat cannot be read",
         fix: "imprnt hub recover <registry> door:door-fake",
       });
-      expect(await wordOn("p2-lair")).toBe(cardBroken("en", { says: "the chat cannot be read" }));
+      expect(await wordOn("p2-lair")).toBe(chatStuck("en", { why: "the chat cannot be read" }));
     } finally {
       await staged.stop();
     }
@@ -683,7 +694,7 @@ test(
 );
 
 test(
-  "the chats page lists the authenticated person's agents' newest lines from the files on this machine, and one agent's chat reads newest first, rendered as text, with the older days a plain link away",
+  "the chats page lists every person's agents' newest lines from the files on this machine, and one agent's chat reads newest first, rendered as text, with the older days a plain link away",
   async () => {
     const staged = await stage();
     try {
@@ -707,16 +718,18 @@ test(
       plantChatLine({ stateDir, text: nasty, at: new Date(`${newer}T09:30:00.000Z`) });
       expect(existsSync(join(stateDir, "p1", "chatlog", "p1-lair", `${newer}.jsonl`))).toBe(true);
 
-      // The list: the owner's agent with its newest day and the first eighty
-      // characters of its newest line, escaped. Another person's agents are
-      // neither listed nor readable with this account.
+      // The list: every person's agents, the owner's with its newest day and
+      // the first eighty characters of its newest line, escaped. The household
+      // reads one board, and nothing is filtered per person.
       const list = await bodyOf(board, "/chats");
       expect(list).toContain('href="/chats/p1/p1-lair"');
-      expect(list).not.toContain('href="/chats/p2/p2-lair"');
+      expect(list).toContain('href="/chats/p2/p2-lair"');
       expect(list).toContain(newer);
-      expect(list).toContain("&lt;script&gt;alert(1)&lt;/script&gt; and ```");
+      // The preview is one clean line: escaped, and the fence marks taken off.
+      expect(list).toContain("&lt;script&gt;alert(1)&lt;/script&gt; and fenced &lt;b&gt;code&lt;/b&gt;");
+      expect(list).not.toContain("```");
       expect(list).not.toMatch(/<script/i);
-      expect((await board.get("/chats/p2/p2-lair")).status).toBe(404);
+      expect((await board.get("/chats/p2/p2-lair")).status).toBe(200);
 
       // The chat: newest day first, newest line first inside it, and a full
       // page holds the newer day alone with the older day behind a link.
@@ -756,8 +769,9 @@ test(
       expect(behind.indexOf("10:00")).toBeLessThan(behind.indexOf("09:00"));
       expect(behind).not.toContain(">older</a>");
 
-      // Other people's chats stay private even when their log is empty.
-      expect((await board.get("/chats/p2/p2-lair")).status).toBe(404);
+      // Another person's chat with an empty log is a page that says so.
+      const other = await bodyOf(board, "/chats/p2/p2-lair");
+      expect(other).toContain("nothing has been said here yet.");
 
       // A person or an agent the registry does not declare, and an agent
       // asked for under the wrong person, are the one 404.
@@ -772,9 +786,9 @@ test(
       for (const path of ["/chats", "/chats/p1/p1-lair", "/usage", "/"]) {
         const html = await bodyOf(board, path);
         expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
-        expect(html).toContain("font: 16px/1.5");
+        expect(html).toContain("16px/1.5 var(--sans)");
         expect(html).toContain("min-height: 44px");
-        expect(html).toContain("@media (max-width: 699px)");
+        expect(html).toContain("@media (max-width: 599px)");
         expect(html).not.toMatch(/<script/i);
         expect(html).not.toMatch(/http-equiv\s*=\s*["']?refresh/i);
       }
@@ -825,24 +839,28 @@ test(
       ]);
 
       const text = await bodyOf(board, "/usage");
-      const rowOf = (agent: string, window: string): string =>
-        new RegExp(`<tr><td[^>]*>${agent}</td><td[^>]*>${window}</td>[\\s\\S]*?</tr>`).exec(text)?.[0] ?? "";
-      expect(rowOf("p1-lair", "today")).toContain(">1500<");
-      expect(rowOf("p1-lair", "today")).toContain(">0.0125 USD<");
-      expect(rowOf("p1-lair", "week")).toContain(">2<");
-      expect(rowOf("p1-lair", "week")).toContain(">2100<");
-      expect(text).not.toContain("9999");
-      // The agent whose turn carried no counts prints the nothing mark and
-      // never a zero for its tokens and its price.
+      // One row per agent, today and the last seven days side by side.
+      const rowOf = (agent: string, window: "today" | "last 7 days"): string =>
+        new RegExp(`<tr><td[^>]*>${agent}</td>[^\\n]*?<td data-label="${window}"[^>]*>([^<]*)</td>`).exec(text)?.[1] ?? "";
+      // A count of tokens reads with its thousands grouped.
+      expect(rowOf("p1-lair", "today")).toBe("1 turn · 1,500 tokens · 0.0125 USD");
+      expect(rowOf("p1-lair", "last 7 days")).toBe("2 turns · 2,100 tokens · 0.0125 USD");
+      // Cell values, not the page: the stylesheet's accent colour is #0f9999.
+      expect(text).not.toContain(">9999<");
+      expect(text).not.toContain("9,999");
+      expect(text).not.toContain("12,099");
+      // The agent whose turn carried no counts says so, and never a zero for
+      // its tokens or its price.
       const blind = rowOf("p2-lair", "today");
-      expect(blind).not.toBe("");
-      expect(blind).toContain(">1<");
-      expect(blind).toContain(">-<");
-      expect(blind).not.toMatch(/>\s*0(\.0+)?\s*</);
-      // The window, field for field, in the sheet's own words.
+      expect(blind).toBe("1 turn · no token count · unpriced");
+      expect(blind).not.toMatch(/(^|\s)0(\.0+)?(\s|$)/);
+      // The window, field for field: the fraction as a share used, and its
+      // times as a person reads a time.
       expect(text).toContain("household-claude");
-      expect(text).toContain(">0.42<");
-      expect(text).toContain("2026-09-26T12:00:00.000Z");
+      expect(text).toContain(">42% used<");
+      expect(text).toContain(">2026-09-26 12:00 UTC<");
+      expect(text).toContain(">2026-09-26 07:00 UTC<");
+      expect(text).not.toContain("2026-09-26T12:00:00.000Z");
       expect(text).toContain(RUNNER_ENTRY.id);
       // The word the owner ruled out is on no page a person reads.
       for (const path of PAGES) expect(await bodyOf(board, path)).not.toMatch(/\bowed\b/i);

@@ -1251,6 +1251,153 @@ export function cardBroken(language: Language, values: LineValues = {}): string 
   return interpolate(language, "{says}", values);
 }
 
+/**
+ * The other three things an open message can be, each its own sentence beside
+ * `cardWaiting`, which is said only of a turn the store shows running with its
+ * owner connected. An open row is not a turn that is running: it may be waiting
+ * for a runner, held for its owner, or left behind by a runner that is gone.
+ */
+export function cardQueued(language: Language, values: LineValues = {}): string {
+  const count = Number(values.count ?? 0);
+  return interpolate(language, language === "ru"
+    ? "ждут, пока их возьмут, сообщений: {count}"
+    : `{count} ${count === 1 ? "message" : "messages"} waiting to be picked up`, values);
+}
+
+/**
+ * A preserved original input whose hold is NOT released, and only that. Once
+ * the owner's recovery choice releases the hold the input is not current
+ * activity and no sentence is said about it at all.
+ */
+export function cardHeld(language: Language, values: LineValues = {}): string {
+  const count = Number(values.count ?? 0);
+  return interpolate(language, language === "ru"
+    ? "удержано, ждёт решения о восстановлении, сообщений: {count}"
+    : `{count} ${count === 1 ? "message" : "messages"} held, waiting for a recovery choice`, values);
+}
+
+export function cardStale(language: Language, values: LineValues = {}): string {
+  const count = Number(values.count ?? 0);
+  return interpolate(language, language === "ru"
+    ? "не завершено, никто не работает, сообщений: {count}"
+    : `{count} ${count === 1 ? "message" : "messages"} unfinished, with nothing working on ${count === 1 ? "it" : "them"}`, values);
+}
+
+/**
+ * Why the oldest open message of a state is where it is: a closed list, one
+ * whole sentence per reason, each naming only what the store recorded. None says
+ * a process is alive except `answering`, which the store shows three ways.
+ */
+const TURN_REASON: Record<Language, Record<string, string>> = {
+  en: {
+    answering: "{runner} is answering it, since {at}.",
+    hold: "held since {at}: {cause}.",
+    continuing: "held since {at}: the owner chose to continue it, and the continuation carries the work.",
+    "owner-gone": "{runner} took it and is not working on it now.",
+    orphaned: "it was started and no runner holds it now.",
+    "ownership-unknown": "it is not known whether {runner} is still running it.",
+    "not-held": "{runner} stopped part way and no decision was asked for.",
+    claimed: "{runner} picked it up and has not started yet.",
+    retry: "waiting to try again at {at}.",
+    unclaimed: "waiting for a runner since {at}.",
+  },
+  ru: {
+    answering: "{runner} отвечает на него с {at}.",
+    hold: "удержано с {at}: {cause}.",
+    continuing: "удержано с {at}: владелец выбрал продолжить, работу несёт продолжение.",
+    "owner-gone": "{runner} взял его и сейчас над ним не работает.",
+    orphaned: "работа была начата, и сейчас его не держит ни один раннер.",
+    "ownership-unknown": "неизвестно, выполняет ли его {runner} до сих пор.",
+    "not-held": "{runner} остановился на полпути, и решения не запрашивали.",
+    claimed: "{runner} взял его и ещё не начал.",
+    retry: "ждёт повторной попытки в {at}.",
+    unclaimed: "ждёт раннера с {at}.",
+  },
+};
+
+export function turnReason(language: Language, reason: string, values: LineValues = {}): string {
+  const template = TURN_REASON[language][reason] ?? TURN_REASON[language].unclaimed;
+  const cause = HOLD_CAUSE[language][String(values.cause ?? "")] ?? String(values.cause ?? "");
+  return interpolate(language, template, { ...values, cause });
+}
+
+/**
+ * One chat's row on the board's first screen: what a person needs to know
+ * about it, in one sentence, and nothing about a state the store does not
+ * show. Problems say why in the finding's or the store's own closed words.
+ */
+export function chatHealthy(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru" ? "в норме, ничего не ждёт" : "healthy, nothing waiting", values);
+}
+
+export function chatBusy(language: Language, values: LineValues = {}): string {
+  const report = values.kind === "report";
+  return interpolate(language, language === "ru"
+    ? (report ? "занят: разбирает отчёт задачи с {at}" : "занят: отвечает на сообщение с {at}")
+    : (report ? "busy: working on a job's report since {at}" : "busy: answering a message since {at}"), values);
+}
+
+export function chatStuck(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru" ? "застрял: {why}" : "stuck: {why}", values);
+}
+
+/** One state, with the recorded cause; when it is tried again is `chatRetryAt`, said beneath it. */
+export function chatRetrying(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "повтор: {cause}"
+    : "retrying: {cause}", values);
+}
+
+export function chatRetryAt(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "следующая попытка в {at}."
+    : "trying again at {at}.", values);
+}
+
+/** The state alone; the door's recorded cause is said beneath it. */
+export function chatUnreachable(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "застрял: чат недоступен для двери"
+    : "stuck: the door cannot reach this chat", values);
+}
+
+export function chatPaused(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "на паузе: ничего не отвечает, пока его не разбудят"
+    : "paused: answers nothing until it is woken", values);
+}
+
+/** The first screen's headline: how many chats need a person, and what `check` holds. */
+export function overviewChats(language: Language, values: LineValues = {}): string {
+  const problems = Number(values.problems ?? 0);
+  const chats = Number(values.chats ?? 0);
+  if (language === "ru") {
+    return interpolate(language, problems === 0
+      ? "Все чаты работают: {chats}."
+      : "Требуют внимания чатов: {problems} из {chats}.", values);
+  }
+  return interpolate(language, problems === 0
+    ? (chats === 1 ? "The one chat is working." : "All {chats} chats are working.")
+    : `{problems} of {chats} ${chats === 1 ? "chat needs" : "chats need"} attention.`, values);
+}
+
+export function overviewFindings(language: Language, values: LineValues = {}): string {
+  const count = Number(values.count ?? 0);
+  if (language === "ru") {
+    return interpolate(language, count === 0 ? "В листе проверки замечаний нет." : "Замечаний в листе проверки: {count}.", values);
+  }
+  return interpolate(language, count === 0
+    ? "The check sheet holds no findings."
+    : `The check sheet holds {count} ${count === 1 ? "finding" : "findings"}.`, values);
+}
+
+/** A board's exact machine names, refused whole: a name is matched as written and never as a pattern. */
+export function boardHosts(language: Language, values: LineValues = {}): string {
+  return interpolate(language, language === "ru"
+    ? "{id} указывает hosts {value}, а hosts - это список точных имён машины: каждое - имя хоста без порта, без * и без точки в конце. Адрес bind принимается всегда."
+    : "{id} has hosts {value}, and hosts is a list of this machine's exact names: each a hostname with no port, no wildcard and no trailing dot. The bind address is always accepted.", values);
+}
+
 export function actRequested(language: Language, values: LineValues = {}): string {
   return interpolate(language, language === "ru"
     ? "запрошен перезапуск {target}."

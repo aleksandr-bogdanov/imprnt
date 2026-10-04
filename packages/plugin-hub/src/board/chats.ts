@@ -27,7 +27,7 @@ export interface ChatNewest {
   day: string;
   at: string;
   from: string;
-  /** The first eighty characters, which is what a list can show. */
+  /** A one-line preview of at most eighty characters, from `previewOf`. */
   text: string;
 }
 
@@ -94,14 +94,63 @@ function newestFirst(lines: ChatLine[]): ChatLine[] {
   return [...lines].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
+/**
+ * The line `newestFirst` would put first, found in one pass rather than by
+ * sorting a whole day to read one line of it.
+ *
+ * THE SAME LINE, NOT A NEAR ONE. The sort is stable, so among lines with the
+ * same time it keeps the one the file holds first, and a later line replaces the
+ * one held here only when its time is strictly later. Every line here passed
+ * `validLine`, which refuses a time `Date.parse` cannot read, so no comparison
+ * is against NaN.
+ */
+function newestOf(lines: ChatLine[]): ChatLine {
+  let best = lines[0];
+  let bestAt = Date.parse(best.at);
+  for (let i = 1; i < lines.length; i++) {
+    const at = Date.parse(lines[i].at);
+    if (at > bestAt) {
+      best = lines[i];
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
+/** How long a preview may be, the ellipsis included. */
+const PREVIEW = 80;
+
+/**
+ * A chat line as one line a list can show: the marks the chat page renders as
+ * formatting (code fences, inline code, bold, wikilink brackets) taken off so
+ * they are not shown as characters, every run of whitespace one space, and a
+ * long line cut at the last word boundary that fits, with "…". A single word
+ * longer than the whole preview is the one thing cut inside a word, because
+ * there is no boundary to cut at.
+ */
+export function previewOf(text: string): string {
+  const flat = text
+    .replace(/```[^\n`]*\n?([\s\S]*?)```/g, " $1 ")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/\[\[([^\]\n]+)\]\]/g, "$1")
+    .replace(/`+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (flat.length <= PREVIEW) return flat;
+  const room = flat.slice(0, PREVIEW - 1);
+  const space = room.lastIndexOf(" ");
+  return `${(space > 0 ? room.slice(0, space) : room).replace(/[\s,;:.-]+$/, "")}…`;
+}
+
 /** The newest line of one agent's log, or null. */
 export function readChatNewest(args: { stateDir: string; person: string; agent: string }): ChatNewest | null {
   const dir = logDir(args.stateDir, args.person, args.agent);
   for (const day of daysOf(dir) ?? []) {
     const lines = linesOf(dir, day);
     if (lines.length === 0) continue;
-    const last = newestFirst(lines)[0];
-    return { day, at: last.at, from: last.from, text: last.text.slice(0, 80) };
+    const last = newestOf(lines);
+    return { day, at: last.at, from: last.from, text: previewOf(last.text) };
   }
   return null;
 }

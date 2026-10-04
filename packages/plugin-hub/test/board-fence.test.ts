@@ -1,38 +1,44 @@
 // Who may reach the board, and from where. (SPEC §1, RUN-05)
 //
-// THE BOARD LISTENS ON ONE ADDRESS, and that is not the whole fence. A browser
-// on a device that can reach the address will also carry requests that some
-// other page wrote: a form another website posts, a website that rebinds its
-// own name to the board's address and then reads what comes back, a page one
-// frame deep inside somebody else's. None of those is a person pressing a
-// button on the board. So a request is served only when it names the board's
-// own address and port as its host, an act is taken only when the browser says
-// it came from the board's own page, and no page of the board can be framed.
+// THE TAILNET IS THE BOUNDARY, by the owner's ruling, and nobody signs in. The
+// board listens on one address, and that is not the whole fence: a browser on a
+// device that can reach the address will also carry requests that some other
+// page wrote: a form another website posts, a website that rebinds its own name
+// to the board's address and then reads what comes back, a page one frame deep
+// inside somebody else's. None of those is a person pressing a button on the
+// board. So a request is served only when it names the board's own address, or
+// one of the exact names its entry lists, and its port as its host, an act is
+// taken only when the browser says it came from the board's own page, and no
+// page of the board can be framed.
 //
 // A request that carries neither `Origin` nor `Sec-Fetch-Site` is not a
-// browser's, and those headers are not what stops it: the peer rule does,
-// authentication rule does, asserted below.
+// browser's, and those headers are not what stops it: the peer rule does. An
+// act whose peer is this machine is refused, because every agent box on it
+// shares its network, and the peer is the socket's, never a header.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startCluster, type Cluster } from "./helpers/cluster.ts";
+import { hubPath, startCluster, type Cluster } from "./helpers/cluster.ts";
 import { stageHub, superStore, type StagedHub } from "./helpers/hub-fixture.ts";
-import { BOARD_AUTH, BOARD_READER_AUTH, BOARD_OTHER_AUTH, freePort, plantedSeam, recordingSeam, serveBoard, type ServedBoard } from "./helpers/board.ts";
+import { freePort, plantedSeam, recordingSeam, serveBoard, type ServedBoard } from "./helpers/board.ts";
 import { isLocalAddress } from "../src/net/address.ts";
 import { networkInterfaces } from "node:os";
 import type { RunSpec } from "./helpers/registry.ts";
 import type { Store } from "../src/store/connect.ts";
 import { loadRegistry } from "../src/registry/load.ts";
-import { listRunEntries } from "../src/registry/entries.ts";
-import { boardAuthPath } from "../src/board/auth.ts";
+import { secretsDirOf } from "../src/store/secrets.ts";
 import { pageMissing } from "../src/door/lines.ts";
 
 const SLOW = 120_000;
 const HERE = process.platform === "darwin" ? "mac" : "pi";
 const HERE_OS = process.platform === "darwin" ? "macos" : "linux";
 const FLAVOUR = process.platform === "darwin" ? "launchd" : "systemd";
+
+/** Generic names, the shape a tailnet gives a machine: short, and full. */
+const SHORT = "hub-device";
+const FULL = "hub-device.example.ts.net";
 
 let cluster: Cluster;
 const scratch: string[] = [];
@@ -81,7 +87,7 @@ interface Staged {
   stop(): Promise<void>;
 }
 
-async function stage(peer?: unknown): Promise<Staged> {
+async function stage(peer?: unknown, hosts?: string[]): Promise<Staged> {
   const boardEntry: RunSpec = {
     id: "board",
     kind: "board",
@@ -90,6 +96,7 @@ async function stage(peer?: unknown): Promise<Staged> {
     memory_limit_mb: 128,
     bind: "127.0.0.1",
     port: await freePort(),
+    ...(hosts === undefined ? {} : { hosts }),
   };
   const it = await stageHub(cluster, {
     hub: { tick_seconds: 1 },
@@ -142,7 +149,7 @@ async function raw(
     let text = "";
     const lines = [
       `${method} ${path} HTTP/1.1`,
-      ...Object.entries({ authorization: BOARD_AUTH, ...headers }).map(([name, value]) => `${name}: ${value}`),
+      ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
       ...(method === "POST"
         ? ["content-type: application/x-www-form-urlencoded", `content-length: ${Buffer.byteLength(body)}`]
         : []),
@@ -201,7 +208,7 @@ test(
       const port = staged.board.port;
       // A website that rebound its own name to the board's address sends its
       // own name here, and one that points at another port sends that port.
-      for (const host of [`board.example:${port}`, "board.example", `127.0.0.1:${port + 1}`, "127.0.0.1"]) {
+      for (const host of [`board.example:${port}`, "board.example", `127.0.0.1:${port + 1}`, "127.0.0.1", `${SHORT}:${port}`]) {
         const answer = await raw(port, "GET", "/", { host });
         expect(answer.status, `Host: ${host}`).toBe(404);
         expect(text(answer).trim()).toBe(pageMissing("en"));
@@ -209,7 +216,61 @@ test(
       // The control on the same socket shape: the board's own host is served.
       const own = await raw(port, "GET", "/", { host: `127.0.0.1:${port}` });
       expect(own.status).toBe(200);
-      expect(text(own)).toContain("<h1>machines</h1>");
+      expect(text(own)).toContain("<title>status</title>");
+    } finally {
+      await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "a name the entry lists opens the board exactly, on its own port only, and every other name is still refused",
+  async () => {
+    const staged = await stage(undefined, [SHORT, FULL]);
+    try {
+      const port = staged.board.port;
+      // The address keeps working beside the names.
+      for (const host of [`127.0.0.1:${port}`, `${SHORT}:${port}`, `${FULL}:${port}`, `HUB-Device:${port}`, `${FULL.toUpperCase()}:${port}`]) {
+        const answer = await raw(port, "GET", "/", { host });
+        expect(answer.status, `Host: ${host}`).toBe(200);
+        expect(text(answer)).toContain("<title>status</title>");
+      }
+      // Nothing near a listed name is that name: no suffix, no prefix, no
+      // trailing dot, no other port, no other machine, nothing resolved.
+      for (const host of [
+        `${SHORT}:${port + 1}`,
+        SHORT,
+        `${FULL}.:${port}`,
+        `evil.${FULL}:${port}`,
+        `${SHORT}.evil.example:${port}`,
+        `other-device.example.ts.net:${port}`,
+        `example.ts.net:${port}`,
+        `${SHORT}x:${port}`,
+      ]) {
+        const answer = await raw(port, "GET", "/", { host });
+        expect(answer.status, `Host: ${host}`).toBe(404);
+        expect(text(answer).trim()).toBe(pageMissing("en"));
+      }
+
+      // An act from the board's own page opened by name carries that name as
+      // its Origin, and it is the board's own; another site is refused all the
+      // same under the listed Host.
+      const host = `${FULL}:${port}`;
+      const form = `target=${RUNNER_ENTRY.id}`;
+      for (const headers of [
+        { origin: `http://${SHORT}:${port}`, "sec-fetch-site": "cross-site" },
+        { origin: `http://evil.${FULL}:${port}` },
+        { origin: `http://${FULL}:${port + 1}` },
+        { "sec-fetch-site": "same-site" },
+      ] as Record<string, string>[]) {
+        const refused = await raw(port, "POST", "/act/restart", { host, ...headers }, form);
+        expect(refused.status, JSON.stringify(headers)).toBe(404);
+      }
+      expect(await staged.it.read.sheet("control"), "a refused act wrote a row").toEqual([]);
+      const pressed = await raw(port, "POST", "/act/restart", { host, origin: `http://${host}`, "sec-fetch-site": "same-origin" }, form);
+      expect(pressed.status).toBe(303);
+      expect(await staged.it.read.sheet("control")).toHaveLength(1);
     } finally {
       await staged.stop();
     }
@@ -234,6 +295,8 @@ test(
         // origin, so `same-site` is not the board's own page either.
         { "sec-fetch-site": "same-site", origin: `http://127.0.0.1:${port + 1}` },
         { "sec-fetch-site": "same-site" },
+        // A typed address or a bookmark is a read, never a press.
+        { "sec-fetch-site": "none" },
         { origin: `https://${host}` },
       ];
       for (const headers of refused) {
@@ -284,42 +347,91 @@ test(
   SLOW,
 );
 
-test("authenticated owner access works locally; unauthenticated local, remote and unknown peers cannot read or act", async () => {
-  for (const peer of ["production", () => "192.0.2.10", () => null]) {
-    const s = await stage(peer)
-    try {
-      for (const path of ["/", "/chats", "/chats/p1/p1-lair"]) {
-        expect((await s.board.get(path, { headers: { authorization: "" } })).status).toBe(401)
-        expect((await s.board.get(path)).status).toBe(200)
-      }
-      const denied = await raw(s.board.port, "POST", "/act/restart", { host: `127.0.0.1:${s.board.port}`, authorization: "" }, `target=${RUNNER_ENTRY.id}`)
-      expect(denied.status).toBe(401)
-      expect(await s.it.read.sheet("control")).toEqual([])
-      expect((await s.board.post("/act/restart", { target: RUNNER_ENTRY.id })).status).toBe(303)
-      expect((await s.it.read.sheet("control"))[0].data.actor).toBe("board:test-owner")
-    } finally { await s.stop() }
-  }
-}, SLOW)
+test(
+  "nobody signs in: every peer reads every page, and only an act whose peer is another device is taken",
+  async () => {
+    // "production" is the server's own reader, which answers this machine for
+    // a check in this runtime; null is a peer nothing could place.
+    for (const [peer, acts] of [["production", false], [() => null, false], [() => "192.0.2.10", true]] as [unknown, boolean][]) {
+      const s = await stage(peer);
+      try {
+        const host = `127.0.0.1:${s.board.port}`;
+        for (const path of ["/", "/people", "/chats", "/chats/p1/p1-lair", "/chats/p2/p2-lair", "/usage", "/findings", "/metrics"]) {
+          const answer = await s.board.get(path);
+          expect(answer.status, `${path} for ${String(peer)}`).toBe(200);
+          expect(answer.headers.get("www-authenticate"), path).toBeNull();
+          // A credential somebody still sends is a header nothing reads.
+          expect((await s.board.get(path, { headers: { authorization: "Basic dGVzdDp0ZXN0" } })).status).toBe(200);
+        }
+        const pressed = await raw(s.board.port, "POST", "/act/restart",
+          { host, origin: `http://${host}`, "sec-fetch-site": "same-origin" }, `target=${RUNNER_ENTRY.id}`);
+        expect(pressed.status, `a press from ${String(peer)}`).toBe(acts ? 303 : 404);
+        const rows = await s.it.read.sheet("control");
+        if (acts) {
+          expect(rows).toHaveLength(1);
+          expect(rows[0].data.actor).toBe("board");
+        } else {
+          expect(rows, "a press from this machine wrote a row").toEqual([]);
+          for (const path of ["/act/restart", "/act/check", "/act/sleeping", "/act/enabled"]) {
+            expect((await s.board.post(path, { target: RUNNER_ENTRY.id })).status, path).toBe(404);
+          }
+          expect(await s.it.read.sheet("control")).toEqual([]);
+        }
+      } finally { await s.stop() }
+    }
+  },
+  SLOW,
+);
 
-test("a reader cannot act or inspect operator pages, and all accounts are confined to their own chat files", async () => {
-  const s = await stage()
-  try {
-    const own = await s.board.get("/chats", { headers: { authorization: BOARD_READER_AUTH } })
-    expect(own.status).toBe(200)
-    expect(await own.text()).not.toContain('href="/people"')
-    expect((await s.board.get("/people", { headers: { authorization: BOARD_READER_AUTH } })).status).toBe(404)
-    for (const auth of [BOARD_AUTH, BOARD_READER_AUTH]) {
-      expect((await s.board.get("/chats/p2/p2-lair", { headers: { authorization: auth } })).status).toBe(404)
-    }
-    for (const path of ["/act/restart", "/act/check", "/act/sleeping", "/act/enabled"]) {
-      expect((await raw(s.board.port, "POST", path, { host: `127.0.0.1:${s.board.port}`, authorization: BOARD_READER_AUTH }, `target=${RUNNER_ENTRY.id}`)).status).toBe(404)
-    }
-    expect(await s.it.read.sheet("control")).toEqual([])
-    expect((await s.board.get("/chats/p2/p2-lair", { headers: { authorization: BOARD_OTHER_AUTH } })).status).toBe(200)
-    expect((await s.board.get("/chats/p1/p1-lair", { headers: { authorization: BOARD_OTHER_AUTH } })).status).toBe(404)
-    expect((await s.board.post("/act/sleeping", { target: "p2-lair", value: "true" })).status).toBe(404)
-  } finally { await s.stop() }
-}, SLOW)
+test(
+  "the peer is the socket's: a forwarded header from this machine claiming another device is refused",
+  async () => {
+    const s = await stage("production");
+    try {
+      const host = `127.0.0.1:${s.board.port}`;
+      for (const claim of [
+        { "x-forwarded-for": "192.0.2.10" },
+        { forwarded: "for=192.0.2.10" },
+        { "x-real-ip": "192.0.2.10" },
+        { "x-forwarded-for": "192.0.2.10", forwarded: "for=192.0.2.10;proto=http", "x-real-ip": "192.0.2.10" },
+      ] as Record<string, string>[]) {
+        const answer = await raw(s.board.port, "POST", "/act/restart",
+          { host, origin: `http://${host}`, "sec-fetch-site": "same-origin", ...claim }, `target=${RUNNER_ENTRY.id}`);
+        expect(answer.status, JSON.stringify(claim)).toBe(404);
+      }
+      expect(await s.it.read.sheet("control")).toEqual([]);
+      // A read from this machine is a read, and it is served.
+      expect((await raw(s.board.port, "GET", "/", { host })).status).toBe(200);
+    } finally { await s.stop() }
+  },
+  SLOW,
+);
+
+test(
+  "every household chat is visible and every agent's pause is offered, with nothing filtered per person",
+  async () => {
+    const s = await stage();
+    try {
+      const list = await (await s.board.get("/chats")).text();
+      expect(list).toContain('href="/chats/p1/p1-lair"');
+      // p2's agent takes jobs and has no chat: it is listed by name, not
+      // hidden, and is not a link to a chat that cannot exist.
+      expect(list).toContain('<span class="name">p2-lair</span><span class="who">worker</span>');
+      // The nav is the whole board for everyone.
+      for (const path of ["/", "/people", "/chats", "/usage", "/findings", "/metrics"]) {
+        expect(list).toContain(path === "/chats" ? "<strong>chats</strong>" : `href="${path}"`);
+      }
+      const people = await (await s.board.get("/people")).text();
+      for (const agent of ["p1-lair", "p2-lair"]) {
+        expect(people, `${agent} has no pause`).toMatch(new RegExp(`name="target" value="${agent}"`));
+      }
+      // Another person's agent is pressed like any other: with no writer this
+      // board says so, and it is an answer rather than a refusal.
+      expect((await s.board.post("/act/sleeping", { target: "p2-lair", value: "true" })).status).toBe(303);
+    } finally { await s.stop() }
+  },
+  SLOW,
+);
 
 test("every address this machine holds is this machine, and an address it does not hold is not", () => {
   // The rule reads the machine's own interfaces rather than loopback alone,
@@ -333,6 +445,9 @@ test("every address this machine holds is this machine, and an address it does n
   for (const address of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
     expect(isLocalAddress(address), address).toBe(true);
   }
+  // An address nothing could place is refused, which is the safe reading.
+  expect(isLocalAddress(null)).toBe(true);
+  expect(isLocalAddress("")).toBe(true);
   // Documentation addresses, which no box on any network this household has
   // holds, so naming a real one here would read as a rule.
   for (const address of ["192.0.2.10", "198.51.100.7", "2001:db8::9"]) {
@@ -369,51 +484,58 @@ test(
   SLOW,
 );
 
+test(
+  "a board verifier an earlier build left in the secrets directory is never read, and nothing imports the retired gate",
+  async () => {
+    const s = await stage();
+    try {
+      // Malformed and readable by anyone: the retired gate answered this file
+      // with 503 on every page. The board now never opens it, so it changes
+      // nothing, and it is left exactly where it is.
+      const dir = secretsDirOf(loadRegistry(s.it.registryFile))!;
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const file = join(dir, "board-board-auth.json");
+      writeFileSync(file, "malformed-verifier-body", { mode: 0o644 });
+      for (const path of ["/", "/chats", "/people"]) {
+        const answer = await s.board.get(path);
+        expect(answer.status, path).toBe(200);
+        expect(await answer.text()).not.toContain("malformed-verifier-body");
+      }
+      expect(readFileSync(file, "utf8")).toBe("malformed-verifier-body");
+    } finally { await s.stop() }
 
-test("credential revocation is immediate; insecure or missing files fail closed without exposing secrets", async () => {
-  const s = await stage()
-  try {
-    const registry = loadRegistry(s.it.registryFile)
-    const file = boardAuthPath(registry, listRunEntries(registry).find(entry => entry.id === "board")!)!
-    const original = readFileSync(file, "utf8")
-    const demoted = JSON.parse(original)
-    demoted.accounts[0].role = "reader"
-    writeFileSync(file, JSON.stringify(demoted))
-    expect((await s.board.get("/")).status).toBe(303)
-    expect((await s.board.post("/act/restart", { target: "runner-test" })).status).toBe(404)
-    const changed = JSON.parse(original)
-    changed.accounts = changed.accounts.filter((account: { id: string }) => account.id !== "test-owner")
-    writeFileSync(file, JSON.stringify(changed))
-    expect((await s.board.get("/")).status).toBe(401)
-    expect((await s.board.get("/chats", { headers: { authorization: BOARD_READER_AUTH } })).status).toBe(200)
-    writeFileSync(file, original)
-    expect((await s.board.get("/")).status).toBe(200)
-    chmodSync(file, 0o644)
-    expect((await s.board.get("/")).status).toBe(503)
-    chmodSync(file, 0o600)
-    writeFileSync(file, "malformed-secret-file-body")
-    const invalid = await s.board.get("/")
-    expect(invalid.status).toBe(503)
-    expect(await invalid.text()).not.toContain("malformed-secret-file-body")
-    rmSync(file)
-    expect((await s.board.get("/")).status).toBe(503)
-  } finally { await s.stop() }
-}, SLOW)
-
-test("credentials are accepted only in Authorization and authenticated pages cannot be cached or embedded cross-origin", async () => {
-  const s = await stage()
-  try {
-    const host = `127.0.0.1:${s.board.port}`
-    for (const headers of [{ authorization: "" }, { authorization: `Basic ${Buffer.from(`test-owner:${"d".repeat(64)}`).toString("base64")}` }, { authorization: "Bearer wrong" }, { authorization: "", cookie: `authorization=${BOARD_AUTH}` },
-      { authorization: "", "x-forwarded-for": "127.0.0.1", "x-user": "test-owner" }] as Record<string, string>[]) {
-      expect((await raw(s.board.port, "GET", "/chats?token=ignored&user=test-owner", { host, ...headers })).status).toBe(401)
+    // Structurally: no module of the hub imports the retired account module.
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((one) =>
+      one.isDirectory() ? walk(join(dir, one.name)) : one.name.endsWith(".ts") ? [join(dir, one.name)] : []);
+    const board = hubPath("src/board");
+    for (const file of walk(hubPath("src"))) {
+      if (file === join(board, "auth.ts")) continue;
+      const source = readFileSync(file, "utf8");
+      expect(source, `${file} imports the retired board account module`).not.toMatch(/from\s+["'][^"']*board\/auth(\.ts)?["']/);
+      if (file.startsWith(`${board}/`)) {
+        expect(source, `${file} imports the retired board account module`).not.toMatch(/from\s+["']\.\/auth(\.ts)?["']/);
+      }
     }
-    expect((await raw(s.board.port, "GET", "/chats", { host, "sec-fetch-site": "same-site" })).status).toBe(404)
-    const allowed = await raw(s.board.port, "GET", "/chats", { host, "sec-fetch-site": "none" })
-    expect(allowed.status).toBe(200)
-    expect(allowed.headers["cache-control"]).toBe("no-store")
-    expect(allowed.headers.vary).toBe("Authorization")
-    expect(allowed.headers["referrer-policy"]).toBe("no-referrer")
-    expect(text(allowed)).not.toContain(BOARD_AUTH)
-  } finally { await s.stop() }
-}, SLOW)
+  },
+  SLOW,
+);
+
+test(
+  "headers are a browser fence and never identity: a read from a typed address is served, cached nowhere, and leaks no referrer",
+  async () => {
+    const s = await stage();
+    try {
+      const host = `127.0.0.1:${s.board.port}`;
+      expect((await raw(s.board.port, "GET", "/chats", { host, "sec-fetch-site": "same-site" })).status).toBe(404);
+      expect((await raw(s.board.port, "GET", "/chats", { host, "sec-fetch-site": "cross-site" })).status).toBe(404);
+      const allowed = await raw(s.board.port, "GET", "/chats", { host, "sec-fetch-site": "none" });
+      expect(allowed.status).toBe(200);
+      expect(allowed.headers["cache-control"]).toBe("no-store");
+      expect(allowed.headers["referrer-policy"]).toBe("no-referrer");
+      expect(allowed.headers["x-content-type-options"]).toBe("nosniff");
+      expect(allowed.headers["www-authenticate"]).toBeUndefined();
+      expect(allowed.headers.vary ?? "").not.toMatch(/authorization/i);
+    } finally { await s.stop() }
+  },
+  SLOW,
+);

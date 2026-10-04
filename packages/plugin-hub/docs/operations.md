@@ -149,39 +149,29 @@ Production uses the pinned, validated adapter with its existing tool restriction
 Deletion publication and restore safeguards: backup holds a dedicated shared maintenance lock from its final erasure check through publication/read-back; confirmation and erasure take the matching exclusive lock. Failed local purges continue to hold backups. An unreadable local erasure manifest is preserved and blocks startup until independently recovered. Tombstones carry worker agent/conversation paths so a disk restore removes only the deleted worker sessions. Retention may expire recognized generations, but its overall status remains unverified until legacy dump history and retained destination versions are inventoried; generation removal alone never certifies all historical copies erased.
 
 
-## Board accounts (IMP-181)
+## Board access
 
-The board requires a named account for every board page and control, including requests from its own machine. A missing, invalid, or insecure account file returns “Board access is not configured”; there is no unauthenticated fallback. Peer addresses and forwarded identity headers grant no permission.
+The board is reachable on the tailnet and nowhere else, and that is its whole trust boundary: it asks nobody to sign in, has no accounts, and shows every person's chats to anybody who can reach it. The earlier account gate is retired. The board never reads a board verifier file; a `<board-entry-id>-board-auth.json` an earlier build had provisioned in the secrets directory is left where it is, unused, and nothing migrates or deletes it.
 
-Keep this HTTP listener on loopback or the household's encrypted tailnet, as the board deployment requires. HTTP Basic is not transport encryption; do not expose it on an unencrypted LAN or public listener. Open the board's exact configured IP address and port, then enter the account id as the browser's username and its token as the password. Never put credentials in a URL, registry value, command argument, or request log. No login cookie or token-bearing redirect is used.
+What stays in front of every request:
 
-Provision a private JSON file named `<board-entry-id>-board-auth.json` directly inside this machine's `hub.secrets_dir` (default `<hub.state_dir>/secrets`). A board entry may instead use its existing `token_file` field to name another file directly inside that same directory. The directory must be owned by the service account with mode `0700`, and the regular, non-symlink file by the same account with mode `0600`. This entire directory is already masked from every agent box and excluded from backups; a verifier outside it is refused.
+- **Host.** The `Host` header must be the board's bind address (any spelling of it) or one of the exact names in the entry's `hosts`, with the board's own port. A name is compared whole, letter case aside: no wildcard, no suffix match, nothing is resolved. A name that is not listed is refused with the same 404 as a foreign one, which is what makes pointing another website's name at the board's address useless.
+- **Another page.** A request whose `Sec-Fetch-Site` is not `same-origin` (a typed address or a bookmark, `none`, is allowed for a read only), or whose `Origin` is not the board's own, is refused. No page can be framed.
+- **This machine.** A press (any POST) whose peer, the socket's own address, is one of the board machine's addresses is refused, because every agent box on that machine shares its network. Forwarded headers are never read for this. A read from that machine is allowed. An agent on another machine of the household is not stopped by this rule; the tailnet is the boundary.
 
-```json
-{
-  "version": 1,
-  "accounts": [
-    {
-      "id": "owner-reader",
-      "person": "p1",
-      "role": "reader",
-      "token_sha256": "REPLACE_WITH_64_LOWERCASE_HEX_SHA256_DIGEST"
-    }
-  ]
-}
+Pages are `no-store`. The board serves its two typefaces itself under `/fonts/`, behind the same fences: only the font and licence files named in `FONT_FILES` (`src/board/html.ts`), read from `assets/fonts` in the plugin, any other name the 404, and a browser may keep a font for a day. Nothing is fetched from the internet, so a phone on the tailnet with no internet route renders the same page. The artifacts listener, where enabled, keeps its own port and origin and serves only GET.
+
+A `check` command on the board names a registry file that exists where it runs. For another machine that is the file its hub records beside its registry digest on every tick (the `registry` sheet's `file`), shell-quoted. Until a hub of this build has run there, no command is shown for that machine, and one sentence says its hub has not reported which registry file it runs with; the file is never guessed. Only a command is put in the copy box: a fix that is a whole command is that command, a fix that is a sentence shows only the `imprnt hub <verb> <registry> …` command inside it in the box (cut on `check`'s template before the path is filled in, so a quoted path with spaces, a `;` or a `,` is never what ends it), and a fix in words alone is shown as words.
+
+### Opening the board by name
+
+Add the machine's names to the board's `[[run]]` entry, beside `bind` and `port`:
+
+```toml
+hosts = ["hub-device", "hub-device.example.ts.net"]
 ```
 
-Each token must be an independently generated, cryptographically random 32-byte value encoded as 64 lowercase hex characters. Keep the token in the owner's password manager; store only its SHA-256 digest in the file. To calculate that digest without putting the token in shell history or arguments, paste it into this hidden prompt:
-
-```sh
-python3 -c 'import getpass, hashlib, re; token = getpass.getpass("Board token: "); assert re.fullmatch("[0-9a-f]{64}", token); print(hashlib.sha256(token.encode()).hexdigest())'
-```
-
-Use unique account ids and tokens. A maximum of 32 accounts is supported. `person` must name a declared person. `reader` can view only that person's chats and has no dashboard/control access. `operator` additionally has household status, usage, findings, check, and shared-service controls; it is a trusted household operator role, not a restricted service role. Household service controls can affect services belonging to any person; this is intentional operator authority. Its chat reads and direct agent controls are still confined to the named person. Give ordinary readers the reader role. The separate, explicitly enabled artifact listener continues serving published artifacts under its existing policy; board credentials and controls are never moved to that origin.
-
-Rotation, account removal and role changes take effect on the next request: the file is reread, with no timer, cached permission, or service restart. Replace it atomically with another private file in the secrets directory. Removing the file locks the board. Browser Basic credentials may remain cached until the browser session ends; use a private browser window and close it when finished, or revoke the account server-side. There is no misleading application logout button. Authenticated responses are marked `no-store`, and the original host, origin and anti-framing checks remain in force.
-
-Provisioning is an operator step. This development change creates no live credential file and changes no household registry.
+Use the machine's short tailnet name and its full tailnet name exactly as a browser will send them, without a port or a trailing dot. The loader refuses a wildcard, a port, a trailing dot, an address or anything that is not a host name, by line. The board reads its entry when it starts, and its unit file does not change with `hosts`, so the hub does not restart it: after the edit, restart the board's own unit on its machine (`systemctl --user restart imprnt-hub-<board entry id>` under systemd, `launchctl kickstart -k gui/$(id -u)/imprnt-hub-<board entry id>` under launchd), then open `http://<name>:<port>/`. The bind address keeps working. Copy the edited registry to every other machine as after any edit.
 Approved outbound messages use `hub_outbound` in an ordinary master's chat. `inspect` lists that person's accounts and external findings; `draft` freezes the account identity, target ID/link/label and exact message in a preview. The owner's green-check reaction is the only send authorization. Editing a pending draft requires its `draft_id` and `expected_revision`, supersedes the previous preview and requires a new check. There is no model-callable approve/send action. Masters share the same rights; the configured account's agent receives LinkedIn reading notices (use the career master).
 
 Outbound is opt-in after migration021. Set `[outbound] accounts_file = "/absolute/private/accounts.json"`, then restart the serving door. The private JSON file is an array of `{id, person, agent, door, platform, identity, capabilities, adapter_module, options}`. `platform` is `linkedin` or `kleinanzeigen`; `identity` is the owner-account identity shown in previews; `adapter_module` is an absolute path to a trusted private ES module. `capabilities` declares supported target kinds from the adapter contract; drafting reads this declaration without importing private code. The accounts file must be owner-owned mode0600 in an owner-owned mode0700 directory. Its path, adapter code and every parent must be canonical, without symlinks or group/world write access, outside temporary directories, agent trees, repositories and Hub state. Keep private adapter dependencies under the protected accounts directory; trusted installed adapter code may live elsewhere under equally protected parents. Do not put cookies or tokens in this configuration or model-visible fields. Keep provider code and endpoints private. Existing reading-only hunt watchers are unchanged.
