@@ -823,6 +823,9 @@ export const HARVEST_DEFAULTS = {
 /** The three window thresholds, percent, on a `paid = "plan"` preset. */
 const WINDOW_KEYS = ["window_pause_at", "window_notice_at", "window_hold_at"] as const;
 
+/** The longest `presets.<name>.description` a preview carries under the agent line. */
+export const PRESET_DESCRIPTION_MAX = 120;
+
 /** The five, alphabetical, which is the order the derived id hashes them in. */
 export const PRESET_KEYS = ["adapter", "effort", "model", "paid", "provider"] as const;
 
@@ -1954,6 +1957,31 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         here,
         `${name} is paid for by ${describe(paid)}, and the two this hub has are ` +
           `${PAID_KINDS.join(" and ")}`,
+      );
+    }
+    // A description is what a person reads under the agent in a topic chat's
+    // preview, so it is one short line or the file is refused. It is NOT one of
+    // the five settings: it is read off the raw table (`descriptionOfPreset`),
+    // so it changes no preset id and no turn record.
+    const description = table.description;
+    const notOneLine =
+      description === undefined
+        ? null
+        : typeof description !== "string"
+          ? `is ${describe(description)} rather than text`
+          : description.trim() === ""
+            ? "is blank"
+            : /[\u0000-\u001f\u007f]/.test(description)
+              ? "carries a line break or another control character"
+              : description.length > PRESET_DESCRIPTION_MAX
+                ? `is ${description.length} characters long`
+                : null;
+    if (notOneLine !== null) {
+      refuse(
+        `${where}.description`,
+        here,
+        `${name}'s description ${notOneLine}, and a description is one line of 1 to ` +
+          `${PRESET_DESCRIPTION_MAX} characters with no control characters`,
       );
     }
 

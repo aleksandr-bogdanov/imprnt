@@ -271,3 +271,13 @@ test("the preview is the labels in the owner's order, then the request exactly a
   expect(previewHash("topic.create", payload, text.replace("pi", "mac"), topicConfirmationAsk("en"))).not.toBe(one)
   expect(previewHash("topic.create", { ...payload, machine: "mac" }, text, topicConfirmationAsk("en"))).not.toBe(one)
 })
+
+test("a preset's description is one line under the agent, and a preset with none previews byte for byte as before", () => {
+  const plain = { chat_name: "coffee", machine: "pi", adapter: "codex", model: "m", provider: "p", initial_request: "hello" }
+  expect(topicPreview("en", plain)).toBe("Chat: coffee\nExecution machine: pi\nAgent: Codex (m, p)\n\nhello")
+  expect(topicPreview("en", { ...plain, description: "One line about it" }))
+    .toBe("Chat: coffee\nExecution machine: pi\nAgent: Codex (m, p)\nOne line about it\n\nhello")
+  // What reaches the preview cannot add a line or carry a URL, whatever was passed in.
+  expect(topicPreview("ru", { ...plain, description: "first\nsecond https://x.example" }).split("\n")[3]).toBe("first")
+  expect(topicPreview("en", { ...plain, description: "https://x.example" })).toBe(topicPreview("en", plain))
+})

@@ -131,3 +131,17 @@ export function credentialOfPreset(registry: unknown, presetName: string): strin
   const named = table?.credential;
   return typeof named === "string" && named !== "" ? named : null;
 }
+
+/**
+ * The one line a person reads under the agent in a topic preview, or null. Off
+ * the RAW table for the reason `windowThresholds` gives: it is not a setting,
+ * so it changes no preset id and no turn record.
+ */
+export function descriptionOfPreset(registry: unknown, presetName: string): string | null {
+  const it = loaded(registry, "descriptionOfPreset");
+  const table = (it.data.presets as Record<string, Record<string, unknown>> | undefined)?.[
+    presetName
+  ];
+  const said = table?.description;
+  return typeof said === "string" ? said : null;
+}

@@ -231,6 +231,8 @@ owner = "p1"
 # window_pause_at percent proactive work pauses, at window_notice_at one line
 # goes into each person's chat, and at window_hold_at every row waits for the
 # reset. An agent on a per-token key has no window and carries none of the three.
+# `description` is optional: one line of at most 120 characters, shown under the
+# agent in a topic chat's preview. It is not a setting and changes no id.
 [presets.daily]
 adapter = "claude-code"
 model = "a-model-name"
@@ -272,6 +274,7 @@ window_hold_at = 100
 # effort = "default"
 # paid = "key"
 # credential = "provider-key"
+# description = "<one line the owner reads in a topic preview>"
 
 # The recognizers this household declares, one table each, and `voice.recognizer`
 # above names the one it uses. A `sherpa-onnx` one runs beside the door on

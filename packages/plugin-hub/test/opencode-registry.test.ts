@@ -12,7 +12,7 @@ import { topicPreview } from "../src/door/topic-lines.ts"
 import { bindingVerdict } from "../src/hub/topics.ts"
 import { listCredentials } from "../src/registry/entries.ts"
 import { RegistryRefused, loadRegistry, modelBaseUrlRefusal, type CredentialEntry } from "../src/registry/load.ts"
-import { presetId } from "../src/registry/presets.ts"
+import { descriptionOfPreset, getPreset, presetId } from "../src/registry/presets.ts"
 import { engineLabel, resolveTopicSetup } from "../src/registry/topics.ts"
 import { writeRegistry } from "./helpers/authorized-registry.ts"
 
@@ -121,6 +121,50 @@ test("a topic preview names the provider for a preset on a model key and for no 
   expect(ask()).toMatchObject({ ok: true, preset: "login", preset_from: "door", adapter: "claude-code" })
   expect(ask()).not.toHaveProperty("provider")
   expect(ask("keyed")).toMatchObject({ ok: true, preset: "keyed", preset_from: "request", adapter: "opencode", provider: "synthetic-provider" })
+})
+
+test("a preset's description is optional, one short line, changes no id or setting, and reaches the master's setup only when given", () => {
+  const keyed = { adapter: "codex", model: "synthetic-model", provider: "synthetic-provider", effort: "default", paid: "key", credential: "provider-key" }
+  const load = (description?: unknown) => {
+    const dir = mkdtempSync(join(tmpdir(), "hub-preset-description-"))
+    dirs.push(dir)
+    return loadRegistry(writeRegistry(dir, {
+      hub: { state_dir: dir },
+      machines: [{ id: "pi", os: "linux" }],
+      people: [{ id: "p1", allowed_senders: { "door-d": ["100000000000000001"] } }],
+      credentials: [{ id: "provider-key", kind: "model-key", file: "/var/lib/imprnt-hub/secrets/provider.token", owner: "p1", base_url: BASE }],
+      presets: { keyed: { ...keyed, ...(description === undefined ? {} : { description: description as string }) } },
+      agents: [{ id: "p1-lair", person: "p1", preset: "keyed", chat: "1000000001", door: "door-d", runner: "runner-pi" }],
+      run: [
+        { id: "door-d", kind: "door", machine: "pi", platform: "discord", person: "p1", token_file: "/dev/null", schedule: "always", memory_limit_mb: 192, guild: "800000000000000001", topic_machine: "pi", topic_preset: "keyed" },
+        { id: "runner-pi", kind: "runner", machine: "pi", schedule: "always", memory_limit_mb: 512, child_memory_limit_mb: 2048 },
+      ],
+    }))
+  }
+  const said = "Synthetic model in Codex on the provider key"
+  const without = load(), withIt = load(said)
+  // The five settings, and so the id and every turn record, are the same with and without one.
+  expect(getPreset(withIt, "keyed")).toEqual(getPreset(without, "keyed"))
+  expect(presetId(getPreset(withIt, "keyed"))).toBe(presetId(getPreset(without, "keyed")))
+  expect(descriptionOfPreset(without, "keyed")).toBeNull()
+  expect(descriptionOfPreset(withIt, "keyed")).toBe(said)
+  const ask = (it: unknown) => resolveTopicSetup(it, { person: "p1", door: "door-d", chat_name: "chat" })
+  expect(ask(without)).not.toHaveProperty("description")
+  expect(ask(withIt)).toMatchObject({ ok: true, preset: "keyed", adapter: "codex", provider: "synthetic-provider", description: said })
+  expect(engineLabel("codex")).toBe("Codex")
+  expect(load("x".repeat(120))).toBeDefined()
+
+  for (const [description, why] of [
+    ["first line\nsecond line", "line break"],
+    ["x".repeat(121), "121 characters"],
+    ["   ", "blank"],
+    [42, "rather than text"],
+  ] as const) {
+    let refused: RegistryRefused | undefined
+    try { load(description) } catch (error) { refused = error as RegistryRefused }
+    expect(refused?.key, String(description)).toBe("presets.keyed.description")
+    expect(refused?.message, String(description)).toContain(why)
+  }
 })
 
 test("an approved setup is approved for its provider: the same model behind another is a changed setup", () => {

@@ -31,6 +31,8 @@ export interface PreviewSetup {
   model: string;
   /** Only for a preset on a model key: shown beside the model so that an engine is never read as another provider's. */
   provider?: string;
+  /** The preset's own one-line description, shown under the agent only when it has one. */
+  description?: string;
   /** The request or handover, verbatim, and the very text the agent's first input will be. */
   initial_request: string;
   tool_profile?: string[];
@@ -38,10 +40,13 @@ export interface PreviewSetup {
 
 export function topicPreview(language: Language, setup: PreviewSetup): string {
   const label = LABELS[language];
+  // A preset with no description reads byte for byte as it always did, so its preview hashes the same.
+  const description = setup.description === undefined ? "" : safeValue(setup.description);
   const head = [
     `${label.chat}: ${setup.chat_name}`,
     `${label.machine}: ${setup.machine}`,
     `${label.agent}: ${engineLabel(setup.adapter)} (${setup.model}${setup.provider === undefined ? "" : `, ${setup.provider}`})`,
+    ...(description === "" ? [] : [description]),
   ].join("\n");
   const tools = setup.tool_profile && setup.tool_profile.length > 0 ? `\n\n${label.tools}: ${setup.tool_profile.join(", ")}` : "";
   return `${head}\n\n${setup.initial_request}${tools}`;
