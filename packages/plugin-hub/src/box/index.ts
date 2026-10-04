@@ -6,6 +6,7 @@ import { backupStagingFor, listAgents, listCredentials, listPeople, listReposito
 import { readSetting } from "../registry/load.ts";
 import { localRemotePath } from "../registry/remote.ts";
 import { secretsDirOf } from "../store/secrets.ts";
+import { readWslView, wslGrantedUnder, wslKeptFiles, wslMaskPaths, type WslView } from "../os/wsl.ts";
 import type { BoxContext, BoxedCommand } from "./types.ts";
 
 /**
@@ -380,7 +381,7 @@ function profilePath(ctx: BoxContext): string {
  * pid namespace and no sandbox rule produces one, so the process list is NOT
  * fenced there. The tree, its files and its origin are fenced on both.
  */
-export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): BoxedCommand {
+export function boxCommand(argv: string[], ctx: BoxContext, platform?: string, host: { wsl?: WslView | null } = {}): BoxedCommand {
   // A path is resolved to what it really is, so two spellings of one file are
   // one mask. A path the system will not resolve is used as it was written
   // rather than throwing: some sockets refuse the call, and a box that cannot be
@@ -398,6 +399,23 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
   // machine's command. Unnamed, it is the one this process is running on.
   const flavour = String(platform ?? process.platform);
   if (flavour === "linux") {
+    // On a WSL guest, what WSL itself opens around Linux. Read off this machine
+    // unless the caller supplied it, and nothing anywhere else.
+    const wsl = wslMaskPaths(Object.hasOwn(host, "wsl") ? host.wsl ?? null : readWslView());
+    // Every grant the box makes, in the order and the mode it makes them, so a
+    // grant under a WSL mask is bound back after the mask exactly as it was.
+    // The read paths come first: the host is read-only, so they are bound only
+    // where a mask emptied them, and a writable grant over one still wins.
+    const inTree = (path: string) => ctx.tree !== "" && (path === ctx.tree || path.startsWith(`${ctx.tree}/`));
+    const grants: [string, string][] = [
+      ...(ctx.readPaths ?? []).map((path): [string, string] => ["--ro-bind", path]),
+      ...(ctx.tree ? [[readsOnly(ctx) ? "--ro-bind" : "--bind", ctx.tree] as [string, string]] : []),
+      ...(ctx.stateRoot ? [["--ro-bind", ctx.stateRoot] as [string, string]] : []),
+      ...(ctx.sessionDir ? [["--bind", ctx.sessionDir] as [string, string]] : []),
+      ...[...new Set(ctx.writePaths ?? [])].map((path): [string, string] => [readsOnly(ctx) && inTree(path) ? "--ro-bind" : "--bind", path]),
+    ];
+    const kept = grants.filter(([, path]) => wslGrantedUnder(wsl, path) && existsSync(path));
+    const others = [...new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])].filter(tree => tree !== "" && existsSync(tree));
     return {
       tool: "bwrap",
       argv: [
@@ -444,18 +462,12 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // writable on both purposes: the model CLI rotates its token there.
         ...[...new Set(ctx.writePaths ?? [])]
           .filter((path) => path !== "" && existsSync(path))
-          .flatMap(path => [
-            readsOnly(ctx) && ctx.tree !== "" &&
-            (path === ctx.tree || path.startsWith(`${ctx.tree}/`)) ? "--ro-bind" : "--bind",
-            path, path,
-          ]),
+          .flatMap(path => [readsOnly(ctx) && inTree(path) ? "--ro-bind" : "--bind", path, path]),
         // A tmpfs empties another person's tree and state root. Under the
         // read-only host bwrap cannot create a missing mount point, so a path
         // that is not there is skipped: it holds nothing to hide, and the host
         // being read-only means a boxed command cannot create it either.
-        ...[...new Set([...ctx.otherTrees, ...(ctx.otherStateRoots ?? [])])]
-          .filter(tree => tree !== "" && existsSync(tree))
-          .flatMap(tree => ["--tmpfs", tree]),
+        ...others.flatMap(tree => ["--tmpfs", tree]),
         // A fresh empty tmpfs over the user runtime directory and the system
         // bus directory. The user session bus and systemd's own private socket
         // both live under /run/user, and a process that reaches either can ask
@@ -464,6 +476,19 @@ export function boxCommand(argv: string[], ctx: BoxContext, platform?: string): 
         // needs is there. Skipped where it is not there, for the same reason the
         // other-tree masks are: nothing to hide, and no way to create it.
         ...RUNTIME_MASKS.filter(existsSync).flatMap(path => ["--tmpfs", path]),
+        // A WSL guest's ways out of Linux: the interop sockets a Windows program
+        // is started through, which then runs outside the box as the Windows
+        // account, the folder every distro of that account shares, WSLg's display
+        // and every mounted Windows drive. Empty on every other machine.
+        ...wsl.flatMap(path => ["--tmpfs", path]),
+        // Then what the launch granted beneath one of them, each on its own and
+        // in its own mode, and never the whole drive; another person's tree or
+        // state root under a grant is emptied again on top of it. And the name
+        // service's file, which WSL keeps in its shared folder by default.
+        ...wslKeptFiles(wsl).flatMap(path => ["--ro-bind", path, path]),
+        ...kept.flatMap(([mode, path]) => [mode, path, path]),
+        ...others.filter(tree => kept.some(([, path]) => tree.startsWith(`${path}/`)))
+          .flatMap(tree => ["--tmpfs", tree]),
         // The docker socket and the X authority cookie, each covered with
         // /dev/null. A path that is not on this box is skipped, and the two
         // spellings of the socket are one path once the symlink is resolved.

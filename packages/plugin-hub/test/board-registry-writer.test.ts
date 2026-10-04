@@ -17,12 +17,13 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { hubPath, startCluster, until, type Cluster } from "./helpers/cluster.ts"
 import { stageHub, type StagedHub } from "./helpers/hub-fixture.ts"
-import { BOARD_AUTH, provisionBoardAuth, freePort, plantedSeam } from "./helpers/board.ts"
+import { freePort, plantedSeam } from "./helpers/board.ts"
 import { lineDiff } from "./helpers/registry-fixture.ts"
 import type { RunSpec } from "./helpers/registry.ts"
 import type { OsSeam } from "../src/os/types.ts"
 import { runHub } from "../src/hub/run.ts"
 import { actRefused, editApplied } from "../src/door/lines.ts"
+import { requestCause } from "../src/board/plain.ts"
 
 const HERE = process.platform === "darwin" ? "mac" : "pi"
 const HERE_OS = process.platform === "darwin" ? "macos" : "linux"
@@ -53,7 +54,6 @@ async function stage(): Promise<{ it: StagedHub; board: RunSpec }> {
     people: [{ id: "p1", tree }],
     run: [DOOR_ENTRY, RUNNER_ENTRY, HUB_ENTRY, board],
   })
-  provisionBoardAuth(it.registryFile, board.id)
   return { it, board }
 }
 
@@ -66,15 +66,15 @@ async function program(it: StagedHub, board: RunSpec, preload?: string) {
   const url = `http://${board.bind}:${board.port}`
   await until("the board answered its first page", async () => {
     if (proc.exitCode !== null) throw new Error(`the board exited ${proc.exitCode}: ${(await said).slice(0, 400)}`)
-    try { return (await fetch(`${url}/`, { redirect: "manual", headers: { authorization: BOARD_AUTH } })).status === 200 } catch { return false }
+    try { return (await fetch(`${url}/`, { redirect: "manual" })).status === 200 } catch { return false }
   }, 30_000)
   return {
     async press(path: string, form: Record<string, string>, headers: Record<string, string> = {}) {
       const answer = await fetch(`${url}${path}`, { method: "POST", redirect: "manual",
-        headers: { "content-type": "application/x-www-form-urlencoded", authorization: BOARD_AUTH, ...headers },
+        headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
         body: new URLSearchParams(form).toString() })
       const location = answer.headers.get("location")
-      const landed = answer.status === 303 && location ? await (await fetch(`${url}${location}`, { redirect: "manual", headers: { authorization: BOARD_AUTH } })).text() : await answer.text()
+      const landed = answer.status === 303 && location ? await (await fetch(`${url}${location}`, { redirect: "manual" })).text() : await answer.text()
       return { status: answer.status, landed }
     },
     async stop() { try { proc.kill(15) } catch { /* already gone */ } await proc.exited.catch(() => {}) },
@@ -127,7 +127,7 @@ test("from another machine, a stop and a pause through the board change exactly 
     // The hub and the board are never stopped from the page, whatever a hand
     // written form says, and the file is not touched to find that out.
     const hubStop = await served.press("/act/enabled", { target: HUB_ENTRY.id, value: "false" })
-    expect(hubStop.landed).toContain(actRefused("en", { target: HUB_ENTRY.id, cause: "enabled-not-for-this-kind" }))
+    expect(hubStop.landed).toContain(actRefused("en", { target: HUB_ENTRY.id, cause: requestCause("enabled-not-for-this-kind") }))
     // An id that is all digits names no entry here, and is never read as the
     // entry at that position.
     const byPosition = await served.press("/act/enabled", { target: "0", value: "false" })
@@ -137,7 +137,7 @@ test("from another machine, a stop and a pause through the board change exactly 
   } finally { await served?.stop(); await hub?.stop(); await it.stop() }
 }, SLOW)
 
-test("without credentials, or sent by another page, the same presses leave the registry byte for byte as it was", async () => {
+test("from this machine, or sent by another page, the same presses leave the registry byte for byte as it was", async () => {
   const { it, board } = await stage()
   let shipped: Awaited<ReturnType<typeof program>> | undefined
   let elsewhere: Awaited<ReturnType<typeof program>> | undefined
@@ -147,7 +147,10 @@ test("without credentials, or sent by another page, the same presses leave the r
     shipped = await program(it, board)
     for (const [path, form] of [["/act/enabled", { target: RUNNER_ENTRY.id, value: "false" }],
       ["/act/sleeping", { target: "p1-lair", value: "true" }]] as const) {
-      expect((await shipped.press(path, form, { authorization: "" })).status, `${path} without credentials`).toBe(401)
+      expect((await shipped.press(path, form)).status, `${path} from this machine`).toBe(404)
+      // A forwarded header is a header the asker wrote, and the peer is the socket's.
+      expect((await shipped.press(path, form, { "x-forwarded-for": "192.0.2.10", forwarded: "for=192.0.2.10" })).status,
+        `${path} from this machine claiming another`).toBe(404)
       expect((await shipped.press(path, form, { "sec-fetch-site": "cross-site" })).status, `${path} from another page`).toBe(404)
     }
     await shipped.stop()

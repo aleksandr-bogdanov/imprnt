@@ -149,7 +149,7 @@ test("IMP-162 check reports a login probe that keeps hanging as a timeout, not a
     const probeFindings = async (bin: string) => {
       const store = await superStore(cluster, it.db)
       try {
-        const found = await runCheck({ machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null, loopProbe: { bin, timeoutMs: WAIT, writePaths: [dirname(bin)] } })
+        const found = await runCheck({ disk: null, machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null, loopProbe: { bin, timeoutMs: WAIT, writePaths: [dirname(bin)] } })
         return found.filter(one => one.subject === "loop" && one.kind !== "credential-undeclared")
       } finally { await store.close().catch(() => {}) }
     }

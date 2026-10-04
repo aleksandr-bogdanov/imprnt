@@ -38,7 +38,7 @@ for (const platform of ["telegram", "discord"] as const) for (const [status, cau
         expect(failed.data.since).toBeTruthy()
         expect(JSON.stringify(failed)).not.toContain(secret)
         expect(JSON.stringify(failed)).not.toContain("https://example.invalid/media")
-        const check = () => runCheck({ machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null,
+        const check = () => runCheck({ disk: null, machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null,
           credentials: { open: async () => ({ ok: true }), secrets: async () => [secret] } })
         const actionable = (rows: unknown[]) => {
           const found = rows.filter(row => JSON.stringify(row).includes(cause) && JSON.stringify(row).includes("1000000001"))
@@ -86,7 +86,7 @@ test("ROLL-21 Forbidden healthy token and process cannot conceal a stored failed
   try {
     const { putRow, removeRow } = await import("../src/records/statesheet.ts")
     await putRow(store, "door_health", "door-fake/1000000001", { door: "door-fake", chat: "1000000001", code: "access-denied", cause: "access denied", since: new Date().toISOString(), retry_at: new Date(Date.now() + 30000).toISOString() })
-    const check = () => runCheck({ machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null, credentials: { open: async () => ({ ok: true }), secrets: async () => [] } })
+    const check = () => runCheck({ disk: null, machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null, credentials: { open: async () => ({ ok: true }), secrets: async () => [] } })
     const predicate = (rows: unknown[]) => expect(JSON.stringify(rows), "F21 runCheck must reject token-only health").toContain("access denied")
     expect(() => predicate([])).toThrow()
     predicate(await check())

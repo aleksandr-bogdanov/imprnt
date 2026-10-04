@@ -204,6 +204,7 @@ test("an export carries the transcript and nothing else: the credential, config,
   put(src.sessionDir, "config/.claude.json", '{"userID":"x"}');
   put(src.sessionDir, "config/backups/x", "backup");
   put(src.sessionDir, "config/sessions/2.json", "{}");
+  put(src.sessionDir, "config/.last-cleanup", "1759540000000");
   put(src.sessionDir, "config/.credentials.json", '{"token":"never-read"}');
   put(src.sessionDir, "home/.cache/mcp-logs/2026-10-01.jsonl", "log\n");
   put(src.sessionDir, "tmp/scratch", "scratch");
@@ -221,7 +222,7 @@ test("an export carries the transcript and nothing else: the credential, config,
   // The seam sees what the port and the capture opened: the transcript, once, and nothing else.
   expect(read).toEqual([src.rel]);
   // The credential and the other measured-unneeded entries were looked at by lstat alone, and nothing under them was.
-  expect(listed).toEqual(expect.arrayContaining(["config/.credentials.json", "config/.claude.json", "config/backups", "config/sessions", "config/projects"]));
+  expect(listed).toEqual(expect.arrayContaining(["config/.credentials.json", "config/.claude.json", "config/.last-cleanup", "config/backups", "config/sessions", "config/projects"]));
   for (const rel of listed) expect(rel.startsWith("config/")).toBe(true);
   expect(listed.some(rel => rel.startsWith("config/backups/") || rel.startsWith("config/sessions/"))).toBe(false);
 
@@ -243,6 +244,7 @@ test("side state nobody measured a move without is refused by name and path: an 
     ["side dir", (dir, project) => put(dir, `config/projects/${project}/${SESSION}/subagents/a.jsonl`, "x"), `config/projects/`],
     ["second transcript", (dir, project) => put(dir, `config/projects/${project}/${OTHER}.jsonl`, "x"), `/${OTHER}.jsonl`],
     ["claude.json as a directory", dir => mkdirSync(join(dir, "config/.claude.json")), "config/.claude.json"],
+    [".last-cleanup as a directory", dir => mkdirSync(join(dir, "config/.last-cleanup")), "config/.last-cleanup"],
     ["backups as a link", dir => symlinkSync("/nonexistent", join(dir, "config/backups")), "config/backups"],
     ["a file among the projects", dir => put(dir, "config/projects/stray", "x"), "config/projects/stray"],
   ];

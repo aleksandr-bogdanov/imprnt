@@ -1,3 +1,8 @@
+// RETIRED AND UNUSED. The board's account gate was removed by the owner's
+// ruling: the tailnet is the boundary, and the board answers there without a
+// sign-in. Nothing imports this module, the board never reads a verifier file,
+// and an installed one is left where it is, untouched. It is kept only as
+// compatibility code; do not wire it back in without a new ruling.
 import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";

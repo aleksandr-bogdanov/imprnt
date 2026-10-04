@@ -144,6 +144,7 @@ export async function createTopic(binding: McpBinding, request: CreateRequest): 
           ownerSender: owner.sender, payload: topic.setup,
           preview: topicPreview(language, { chat_name: resolved.chat_name, machine: resolved.machine, adapter: resolved.adapter,
             model: resolved.model, ...(resolved.provider === undefined ? {} : { provider: resolved.provider }),
+            ...(resolved.description === undefined ? {} : { description: resolved.description }),
             initial_request: request_text, ...(tools === undefined ? {} : { tool_profile: tools }) }),
           confirmation: topicConfirmationAsk(language), platform,
           ...(context.revision === null ? {} : { replace: { revision: context.revision } }),
@@ -163,7 +164,8 @@ export async function createTopic(binding: McpBinding, request: CreateRequest): 
           chat: resolved.chat_name,
           execution_machine: { value: resolved.machine, from: resolved.machine_from },
           agent: { preset: resolved.preset, from: resolved.preset_from, engine: resolved.adapter, model: resolved.model,
-            ...(resolved.provider === undefined ? {} : { provider: resolved.provider }) },
+            ...(resolved.provider === undefined ? {} : { provider: resolved.provider }),
+            ...(resolved.description === undefined ? {} : { description: resolved.description }) },
           ...(tools === undefined ? {} : { tools }),
         },
       } satisfies ToolReply;

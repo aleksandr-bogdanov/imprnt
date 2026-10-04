@@ -44,6 +44,7 @@ import { readStampMetrics, type MetricsRow } from "../src/metrics/stamps.ts";
 import { recordPeak } from "../src/hub/peak.ts";
 import { readVoiceHealth, voiceFailed, voiceSucceeded } from "../src/voice/health.ts";
 import { MEDIA_STREAM } from "../src/voice/records.ts";
+import { overviewFindings } from "../src/door/lines.ts";
 
 const SLOW = 120_000;
 const HERE = process.platform === "darwin" ? "mac" : "pi";
@@ -302,8 +303,11 @@ function cellsFor(text: string, column: string, id: string): string[] {
   return found[0];
 }
 
-/** One entry's row on the machines page. */
-const entryRow = (text: string, id: string) => cellsFor(text, "peak bytes", id);
+/** One entry's row on this machine's table of the machines page, the one table with a pid. */
+const entryRow = (text: string, id: string) => cellsFor(text, "pid", id);
+
+/** Bytes as the machines page prints them, in the unit the limit is enforced in. */
+const inMib = (bytes: number) => `${(bytes / MB).toFixed(1)} MiB`;
 
 /** One recognizer's row on the metrics page. */
 const healthRow = (text: string, id: string) => cellsFor(text, "recognizer", id);
@@ -368,12 +372,14 @@ test(
       expect(asserted).toBe(8);
 
       // --- and it sits AFTER the five, in the same table, asserted by order on
-      //     one scope's own lines.
-      const lines = text.split("\n");
-      const at = (metric: string) =>
-        lines.findIndex(
-          (line) => line.includes("p1-lair") && line.includes("today") && line.includes(metric),
-        );
+      //     one scope's own lines: the agent's section runs from its heading
+      //     to the next one, because the page groups the rows by who.
+      const from = text.indexOf("<h3>p1-lair</h3>");
+      expect(from, "the metrics page has no section for p1-lair").toBeGreaterThan(-1);
+      const today = text.indexOf("<th>today</th>", from);
+      expect(today, "p1-lair has no table for today").toBeGreaterThan(-1);
+      const lines = text.slice(today, text.indexOf("</table>", today)).split("\n");
+      const at = (metric: string) => lines.findIndex((line) => line.includes(metric));
       const placed = [
         "time-to-ack",
         "time-to-start",
@@ -547,14 +553,16 @@ test(
       // --- 4. The peak, the reading and the entry's own limit, all three by
       //     value, on the resident's own row.
       const runner = entryRow(text, RUNNER_ENTRY.id);
-      expect(runner).toContain(String(456 * MB));
-      expect(runner).toContain(String(312 * MB));
-      expect(runner).toContain(String(RUNNER_ENTRY.memory_limit_mb));
+      expect(runner).toContain(inMib(456 * MB));
+      expect(runner).toContain("456.0 MiB");
+      expect(runner).toContain(inMib(312 * MB));
+      expect(runner).toContain(`${RUNNER_ENTRY.memory_limit_mb} MiB`);
 
       const door = entryRow(text, DOOR_ENTRY.id);
-      expect(door).toContain(String(91 * MB));
+      expect(door).toContain(inMib(91 * MB));
       expect(door).toContain("-");
       expect(door, "an absent reading printed as a zero").not.toContain("0");
+      expect(door, "an absent reading printed as a zero").not.toContain("0 MiB");
 
       // --- and THE PAGE MEASURES NOTHING. The reading is the hub's own record,
       //     and a board that sampled would be a board that touched every
@@ -600,15 +608,19 @@ test(
 
       // --- 5. The finding, with its own sentence and its own command.
       const text = await bodyOf(board, "/");
-      expect(text).toContain(says);
-      expect(text).toContain(fix);
+      // Check's own sentence, less the subject the row already names beside it.
+      expect(text).toContain(says.slice(`${RUNNER_ENTRY.id} `.length));
+      expect(text).not.toContain(says);
+      // The fix in its own words; a hyphenated word in it is only kept whole
+      // by a span, which is markup and not a word.
+      expect(text.replace(/<span class="nw">([^<]*)<\/span>/g, "$1")).toContain(fix);
       expect(text).toContain("memory-over-limit");
 
       // And the row's own memory cells carry the numbers and NO word: that is
       // the hard-won rule applied to the one number a page is most tempted to
       // judge.
       const runner = entryRow(text, RUNNER_ENTRY.id);
-      expect(runner).toContain(String(880 * MB));
+      expect(runner).toContain(inMib(880 * MB));
       for (const verdict of ["over", "broken", "too large", "warning", "danger"]) {
         expect(runner.join(" ").toLowerCase(), `the row says ${verdict} of its own`).not.toContain(
           verdict,
@@ -647,13 +659,10 @@ test(
       expect(text).not.toContain("<th>recognizer</th>");
       expect(text).not.toContain("last worked");
       // The interval is still a measure of every row, and with no voice at all
-      // it prints the nothing mark rather than a number.
-      const lines = text.split("\n");
-      const row = lines.find(
-        (line) => line.includes("p1-lair") && line.includes("today") && line.includes("transcribe"),
-      );
-      expect(row, `no interval row on a page with a measured chat:\n${text}`).toBeDefined();
-      expect(row).toContain("-");
+      // nothing is measured for it: the page prints no row of dashes for it
+      // and never a number, and says the chat had nothing measured.
+      expect(text.split("\n").filter((line) => line.includes("transcribe"))).toEqual([]);
+      expect(text).toMatch(/<p class="empty">nothing measured this week for [^<]*p1-lair[^<]*\.<\/p>/);
     } finally {
       await staged.stop();
     }
@@ -701,8 +710,9 @@ test(
         "wanted",
         "seen",
         "pid",
-        "peak bytes",
-        "limit mb",
+        "peak",
+        "now",
+        "limit",
         "target",
         "asked by",
         "state",
@@ -716,15 +726,25 @@ test(
         "who",
         "window",
         "measure",
+        // Each window's table is headed by the window.
+        "today",
+        "this week",
         "p50 ms",
         "p99 ms",
         "count",
         "this machine runs nothing the registry declares.",
         "nobody has asked for anything.",
         "nothing has been measured yet.",
-        `nothing is reported for ${THERE} in the check sheet this store holds.`,
+        // Another machine's section: its declared entries and what the store
+        // recorded about them, said in fixed sentences with no value in them.
+        "this board asks no other machine anything: below is what the registry declares there and what the store recorded, and no finding does not mean running.",
+        "the registry declares nothing to run on this machine.",
+        "store connection",
+        "runner started",
+        "memory now",
+        "sampled at",
+        "findings",
         // The voice-facing ones.
-        "reading bytes",
         "recognizer",
         "failing since",
         "class",
@@ -733,8 +753,17 @@ test(
         "last worked",
         "no recognizer has ever failed.",
       ];
+      // The metrics page's one value-carrying line per who or scope: what was
+      // not measured, and for whom, in one fixed shape.
+      const unmeasured = (said: string) => /^nothing measured (?:today|this week)(?: or this week)?(?: for [a-z0-9, -]+)?\.$/.test(said);
+      // The first screen's one value-carrying line under its heading: the
+      // pinned findings sentence, then the time the page was read.
+      const asOf = (said: string) =>
+        [0, 1, 2, 3].some((count) => new RegExp(`^${overviewFindings("en", { count }).replace(/\./g, "\\.")} As of (?:\\d{1,2} [A-Z][a-z]{2} )?\\d{2}:\\d{2} UTC\\.$`).test(said));
       for (const path of ["/", "/metrics"]) {
         for (const said of prose(await bodyOf(board, path))) {
+          if (path === "/" && asOf(said)) continue;
+          if (path === "/metrics" && unmeasured(said)) continue;
           expect(known, `${path} carries a sentence nothing pinned: ${said}`).toContain(said);
         }
       }
@@ -763,9 +792,17 @@ test(
       await it.read.sql(
         `insert into inbound (id, person, agent, body, kind) values ('typed-two', 'p1', 'p1-lair', 'a message', 'human')`,
       );
-      await it.read.sql(
-        `insert into ledger_event (stream, subject, kind, actor) values ('inbound', 'typed-two', 'received', 'door')`,
-      );
+      // Every stamp of a message that was answered and delivered, so each of
+      // the five is measured: the page prints a measure only once it has one.
+      const typed = Date.now();
+      for (const [kind, offset, actor] of [
+        ["received", 0, "door"], ["acked", 2_000, "runner"], ["started", 4_000, "runner"], ["answered", 9_000, "runner"], ["delivered", 11_000, "door"],
+      ] as [string, number, string][]) {
+        await it.read.sql(
+          `insert into ledger_event (stream, subject, kind, actor, at) values ('inbound', 'typed-two', $1, $2, $3)`,
+          [kind, actor, new Date(typed + offset).toISOString()],
+        );
+      }
 
       // A build that rearranged the machines page while adding a column is
       // caught here: every non-voice thing the page carried is asserted again.
@@ -774,9 +811,9 @@ test(
         const cells = entryRow(machines, entry.id);
         expect(cells).toContain(entry.kind);
         expect(cells).toContain("running");
-        expect(cells).toContain(String(entry.memory_limit_mb));
+        expect(cells).toContain(`${entry.memory_limit_mb} MiB`);
       }
-      expect(entryRow(machines, RUNNER_ENTRY.id)).toContain(String(456 * MB));
+      expect(entryRow(machines, RUNNER_ENTRY.id)).toContain(inMib(456 * MB));
       expect(machines).toContain(THERE_ENTRY.id);
       expect(machines).toContain(`the service manager on ${THERE} is not running ${THERE_ENTRY.id}`);
       expect(machines).toContain("nobody has asked for anything.");

@@ -231,6 +231,8 @@ owner = "p1"
 # window_pause_at percent proactive work pauses, at window_notice_at one line
 # goes into each person's chat, and at window_hold_at every row waits for the
 # reset. An agent on a per-token key has no window and carries none of the three.
+# `description` is optional: one line of at most 120 characters, shown under the
+# agent in a topic chat's preview. It is not a setting and changes no id.
 [presets.daily]
 adapter = "claude-code"
 model = "a-model-name"
@@ -272,6 +274,7 @@ window_hold_at = 100
 # effort = "default"
 # paid = "key"
 # credential = "provider-key"
+# description = "<one line the owner reads in a topic preview>"
 
 # The recognizers this household declares, one table each, and `voice.recognizer`
 # above names the one it uses. A `sherpa-onnx` one runs beside the door on
@@ -459,6 +462,12 @@ schedule = "always"
 memory_limit_mb = 128
 bind = "100.64.0.1"
 port = 8794
+# The names this board is also opened by, besides the address above: this
+# machine's short tailnet name and its full one. EXAMPLES, like the address.
+# Each is matched exactly, letter case aside, and with the port above: no
+# wildcard, no suffix, nothing resolved. A name not listed is refused as a
+# foreign one is. Leave the line out and only the address opens the board.
+hosts = ["hub-device", "hub-device.example.ts.net"]
 # A person's artifacts are served on a SECOND port, which is a second origin. An
 # agent writes what is served there, and a page it wrote, opened from a chat
 # link on the port the acts are on, would be the board's own origin: its script

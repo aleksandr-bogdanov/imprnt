@@ -1,5 +1,5 @@
 import { test, expect, beforeAll } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync, chmodSync, rmSync, symlinkSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, realpathSync, chmodSync, rmSync, symlinkSync, statSync, readdirSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -923,6 +923,294 @@ test("imprnt <module> with neither .js nor .mjs falls through to the usage text 
   expect(r.stdout).not.toContain("MODULE_");
   expect(r.stdout).toContain("engine (same subcommands under");
   expect(r.code).toBe(1);
+});
+
+// --- global command registrations: `imprnt plugin link <name> --global --from <dir>` ---
+// Every run here gets a throwaway HOME and XDG_CONFIG_HOME inside the tmp root, so commands.json is
+// only ever written in the sandbox. The fake release is an ESM module under a path with a space in
+// it, the shape of an immutable released package; it prints its argv and cwd and exits with a chosen
+// code, which is how argv, cwd and the exit code are seen to pass through untouched.
+function sandboxEnv(root: string): Record<string, string> {
+  mkdirSync(join(root, "home"), { recursive: true });
+  return { HOME: join(root, "home"), XDG_CONFIG_HOME: join(root, "xdg") };
+}
+
+function fakeRelease(root: string, name: string, version = "v1", exitCode = 0): string {
+  const dir = join(root, "released pkgs", version);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${name}.mjs`),
+    `import { argv, cwd, exit } from "node:process";\nconsole.log("GLOBAL_${version} " + JSON.stringify(argv.slice(2)) + " cwd=" + cwd());\nexit(${exitCode});\n`,
+  );
+  return dir;
+}
+
+function commandsJson(root: string): string {
+  return join(root, "xdg", "imprnt", "commands.json");
+}
+
+// Every regular file under `dir` with its bytes, so a test can assert a tree is unchanged.
+function treeSnapshot(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!existsSync(dir)) return out;
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else out[p] = readFileSync(p, "utf8");
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+test("plugin link --global runs a released ESM module from an unrelated dir; argv, cwd and exit code pass through; vault and claude config untouched", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  // A registered default vault (with its own config.json) and a user claude config, both of which
+  // must come through byte for byte.
+  const vaultProj = join(root, "registered-vault");
+  mkVault(vaultProj);
+  registerDefault(root, vaultProj);
+  mkdirSync(join(root, "claude-config"), { recursive: true });
+  writeFileSync(join(root, "claude-config", "CLAUDE.md"), "# mine\n");
+  const before = { vault: treeSnapshot(vaultProj), claude: treeSnapshot(join(root, "claude-config")), cfg: readFileSync(join(root, "xdg", "imprnt", "config.json"), "utf8") };
+
+  const dir = fakeRelease(root, "relmod", "v1", 7);
+  const elsewhere = join(root, "elsewhere");
+  mkdirSync(elsewhere, { recursive: true });
+  const link = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", dir], env, elsewhere);
+  expect(link.code).toBe(0);
+  expect(link.stdout).toContain(`linked relmod globally → ${join(realpathSync(dir), "relmod.mjs")}`);
+  expect(link.stderr).not.toContain("targeting vault project");
+  expect(JSON.parse(readFileSync(commandsJson(root), "utf8"))).toEqual({ commands: { relmod: { dir: realpathSync(dir) } } });
+
+  const r = await runCli(root, ["relmod", "status", "two words", "--flag"], env, elsewhere);
+  expect(r.stdout).toContain(`GLOBAL_v1 ["status","two words","--flag"] cwd=${realpathSync(elsewhere)}`);
+  expect(r.stdout).not.toContain("engine (same subcommands under");
+  expect(r.code).toBe(7);
+
+  const list = await runCli(root, ["plugin", "list", "--global"], env, elsewhere);
+  expect(list.code).toBe(0);
+  expect(list.stdout).toContain(`relmod → ${realpathSync(dir)}`);
+
+  expect(treeSnapshot(vaultProj)).toEqual(before.vault);
+  expect(treeSnapshot(join(root, "claude-config"))).toEqual(before.claude);
+  expect(readFileSync(join(root, "xdg", "imprnt", "config.json"), "utf8")).toBe(before.cfg);
+  expect(existsSync(join(elsewhere, "CLAUDE.local.md"))).toBe(false);
+  expect(existsSync(join(root, "CLAUDE.local.md"))).toBe(false);
+  expect(existsSync(join(vaultProj, "plugins"))).toBe(false);
+});
+
+test("plugin link --global falls back to ~/.config when XDG_CONFIG_HOME is unset", async () => {
+  const root = tmpRepo();
+  const env = { ...sandboxEnv(root), XDG_CONFIG_HOME: "" };
+  const dir = fakeRelease(root, "relmod");
+  const link = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", dir], env);
+  expect(link.code).toBe(0);
+  expect(existsSync(join(root, "home", ".config", "imprnt", "commands.json"))).toBe(true);
+  expect(existsSync(commandsJson(root))).toBe(false);
+  const r = await runCli(root, ["relmod", "go"], env);
+  expect(r.stdout).toContain(`GLOBAL_v1 ["go"]`);
+  expect(r.code).toBe(0);
+});
+
+test("an explicit global registration overrides project modules, and unlink restores project discovery", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const dir = fakeRelease(root, "relmod");
+  const proj = join(root, "proj");
+  mkVault(proj);
+  stubModule(proj, "relmod", "relmod.js", 4);
+  const link = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", dir], env, proj);
+  expect(link.code).toBe(0);
+  expect(link.stdout).toContain("global registration overrides project modules");
+
+  const inside = await runCli(root, ["relmod", "x"], env, proj);
+  expect(inside.stdout).toContain(`GLOBAL_v1 ["x"]`);
+  expect(inside.stdout).not.toContain("MODULE_relmod.js");
+  expect(inside.code).toBe(0);
+  const list = await runCli(root, ["plugin", "list", "--global"], env, proj);
+  expect(list.stdout).toContain("explicit registrations, then plugins/<name>/");
+
+  // Away from that project the registration answers.
+  const elsewhere = join(root, "elsewhere");
+  mkdirSync(elsewhere, { recursive: true });
+  const outside = await runCli(root, ["relmod", "x"], env, elsewhere);
+  expect(outside.stdout).toContain(`GLOBAL_v1 ["x"]`);
+  expect(outside.code).toBe(0);
+  // Explicit roots also cannot silently switch the operator-pinned release.
+  const explicit = await runCli(root, ["relmod", "x"], { ...env, IMPRNT_ROOT: proj }, elsewhere);
+  expect(explicit.stdout).toContain(`GLOBAL_v1 ["x"]`);
+  // A missing release refuses even though a runnable project module exists.
+  renameSync(dir, `${dir}-away`);
+  const broken = await runCli(root, ["relmod", "x"], env, proj);
+  expect(broken.code).toBe(1);
+  expect(broken.stderr).toContain("linked globally");
+  expect(broken.stdout).not.toContain("MODULE_relmod.js");
+  const unlink = await runCli(root, ["plugin", "unlink", "relmod", "--global"], env, proj);
+  expect(unlink.code).toBe(0);
+  const restored = await runCli(root, ["relmod", "x"], env, proj);
+  expect(restored.stdout).toContain("MODULE_relmod.js x");
+  expect(restored.code).toBe(4);
+});
+
+test("a built-in subcommand can neither be linked nor shadowed by a registration", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const dir = join(root, "released pkgs", "agent");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "agent.mjs"), `console.log("GLOBAL_agent");\n`);
+  const link = await runCli(root, ["plugin", "link", "agent", "--global", "--from", dir], env);
+  expect(link.code).toBe(1);
+  expect(link.stderr).toContain("built-in imprnt command");
+  expect(existsSync(commandsJson(root))).toBe(false);
+
+  // A hand-written entry under a built-in name is still never dispatched.
+  mkdirSync(dirname(commandsJson(root)), { recursive: true });
+  writeFileSync(commandsJson(root), JSON.stringify({ commands: { agent: { dir: realpathSync(dir) } } }));
+  const r = await runCli(root, ["agent"], env);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("default agent:");
+  expect(r.stdout).not.toContain("GLOBAL_agent");
+});
+
+test("plugin link --global refuses names that are not one safe segment, and lookup never traverses", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const dir = fakeRelease(root, "relmod");
+  for (const bad of ["../evil", "a/b", ".hidden", "x".repeat(65), "has space"]) {
+    const r = await runCli(root, ["plugin", "link", bad, "--global", "--from", dir], env);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("invalid command name");
+  }
+  expect(existsSync(commandsJson(root))).toBe(false);
+
+  // A hand-edited key that walks out of its dir is never looked up: <dir>/../evil.mjs exists here.
+  writeFileSync(join(root, "released pkgs", "evil.mjs"), `console.log("PWNED");\n`);
+  mkdirSync(dirname(commandsJson(root)), { recursive: true });
+  writeFileSync(commandsJson(root), JSON.stringify({ commands: { "../evil": { dir: realpathSync(dir) } } }));
+  const r = await runCli(root, ["../evil"], env);
+  expect(r.stdout).not.toContain("PWNED");
+  expect(r.code).toBe(1);
+});
+
+test("plugin link --global validates the target: missing dir, no entry script, entry that is not a file, no --global", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const missing = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", join(root, "nope")], env);
+  expect(missing.code).toBe(1);
+  expect(missing.stderr).toContain("not found");
+
+  const empty = join(root, "released pkgs", "empty");
+  mkdirSync(empty, { recursive: true });
+  const noEntry = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", empty], env);
+  expect(noEntry.code).toBe(1);
+  expect(noEntry.stderr).toContain("has no relmod.js or relmod.mjs");
+
+  mkdirSync(join(empty, "relmod.mjs"));
+  const notFile = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", empty], env);
+  expect(notFile.code).toBe(1);
+  expect(notFile.stderr).toContain("is not a regular file");
+
+  const noGlobal = await runCli(root, ["plugin", "link", "relmod", "--from", fakeRelease(root, "relmod")], env);
+  expect(noGlobal.code).toBe(1);
+  expect(noGlobal.stderr).toContain("needs --global");
+  expect(existsSync(commandsJson(root))).toBe(false);
+});
+
+test("a registration whose target disappeared is an actionable error, never the usage text", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const dir = fakeRelease(root, "relmod");
+  expect((await runCli(root, ["plugin", "link", "relmod", "--global", "--from", dir], env)).code).toBe(0);
+  renameSync(dir, `${dir}-moved`);
+  const r = await runCli(root, ["relmod", "status"], env);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain(`"relmod" is linked globally to ${realpathSync(join(root, "released pkgs"))}`);
+  expect(r.stderr).toContain("does not exist");
+  expect(r.stderr).toContain("imprnt plugin link relmod --global --from <dir> --force");
+  expect(r.stderr).toContain("imprnt plugin unlink relmod --global");
+  expect(r.stdout).not.toContain("engine (same subcommands under");
+  const list = await runCli(root, ["plugin", "list", "--global"], env);
+  expect(list.stdout).toContain("⚠ relmod");
+});
+
+test("a corrupt commands.json is never overwritten: link and unlink refuse, list and dispatch report it", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const dir = fakeRelease(root, "relmod");
+  mkdirSync(dirname(commandsJson(root)), { recursive: true });
+  writeFileSync(commandsJson(root), "{ not json");
+  const link = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", dir], env);
+  expect(link.code).toBe(1);
+  expect(link.stderr).toContain("refusing to modify");
+  const unlink = await runCli(root, ["plugin", "unlink", "relmod", "--global"], env);
+  expect(unlink.code).toBe(1);
+  expect(unlink.stderr).toContain("refusing to modify");
+  expect(readFileSync(commandsJson(root), "utf8")).toBe("{ not json");
+  expect(readdirSync(dirname(commandsJson(root)))).toEqual(["commands.json"]); // no temp file left
+
+  const list = await runCli(root, ["plugin", "list", "--global"], env);
+  expect(list.code).toBe(1);
+  expect(list.stderr).toContain("not valid JSON");
+  const r = await runCli(root, ["relmod"], env);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("global commands could not be read");
+});
+
+test("replacing a registration needs --force and reports the previous target; relink is idempotent; other entries survive", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const v1 = realpathSync(fakeRelease(root, "relmod", "v1"));
+  const v2 = realpathSync(fakeRelease(root, "relmod", "v2"));
+  const other = realpathSync(fakeRelease(root, "othermod", "o1"));
+  mkdirSync(dirname(commandsJson(root)), { recursive: true });
+  writeFileSync(commandsJson(root), JSON.stringify({ note: "keep me", commands: { othermod: { dir: other } } }));
+
+  expect((await runCli(root, ["plugin", "link", "relmod", "--global", "--from", v1], env)).code).toBe(0);
+  const again = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", v1], env);
+  expect(again.code).toBe(0);
+  expect(again.stdout).toContain("already linked globally");
+
+  const refused = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", v2], env);
+  expect(refused.code).toBe(1);
+  expect(refused.stderr).toContain(`already linked to ${v1} - pass --force`);
+  expect(JSON.parse(readFileSync(commandsJson(root), "utf8")).commands.relmod).toEqual({ dir: v1 });
+
+  const forced = await runCli(root, ["plugin", "link", "relmod", "--global", "--from", v2, "--force"], env);
+  expect(forced.code).toBe(0);
+  expect(forced.stdout).toContain(`relinked relmod globally`);
+  expect(forced.stdout).toContain(`previous: ${v1}`);
+  expect(forced.stdout).toContain(`roll back: imprnt plugin link relmod --global --from '${v1}' --force`);
+  expect(JSON.parse(readFileSync(commandsJson(root), "utf8"))).toEqual({ note: "keep me", commands: { othermod: { dir: other }, relmod: { dir: v2 } } });
+
+  expect((await runCli(root, ["relmod"], env)).stdout).toContain("GLOBAL_v2");
+  expect((await runCli(root, ["othermod"], env)).stdout).toContain("GLOBAL_o1");
+  expect(existsSync(join(v1, "relmod.mjs"))).toBe(true); // the old release is the rollback target, left alone
+});
+
+test("plugin unlink --global removes only the registration and keeps the referenced files", async () => {
+  const root = tmpRepo();
+  const env = sandboxEnv(root);
+  const dir = realpathSync(fakeRelease(root, "relmod"));
+  const other = realpathSync(fakeRelease(root, "othermod", "o1"));
+  await runCli(root, ["plugin", "link", "relmod", "--global", "--from", dir], env);
+  await runCli(root, ["plugin", "link", "othermod", "--global", "--from", other], env);
+  const files = treeSnapshot(join(root, "released pkgs"));
+
+  const un = await runCli(root, ["plugin", "unlink", "relmod", "--global"], env);
+  expect(un.code).toBe(0);
+  expect(un.stdout).toContain(`unlinked relmod (was ${dir}; nothing there was deleted)`);
+  expect(treeSnapshot(join(root, "released pkgs"))).toEqual(files);
+  expect(JSON.parse(readFileSync(commandsJson(root), "utf8"))).toEqual({ commands: { othermod: { dir: other } } });
+
+  const r = await runCli(root, ["relmod"], env);
+  expect(r.stdout).toContain("engine (same subcommands under");
+  expect(r.code).toBe(1);
+  const twice = await runCli(root, ["plugin", "unlink", "relmod", "--global"], env);
+  expect(twice.code).toBe(0);
+  expect(twice.stdout).toContain("relmod was not linked globally");
 });
 
 // --- the docs state the same rule the code runs ---

@@ -75,6 +75,8 @@ export interface RunSpec {
   port?: number;
   /** The second port a board serves artifacts on, which is their own origin. */
   artifacts_port?: number;
+  /** The exact names a board is also opened by, besides its bind address. */
+  hosts?: string[];
   /** Whether the hub keeps this entry running. Absent means it does. */
   enabled?: boolean;
   /**
@@ -524,6 +526,7 @@ function renderRegistry(spec: RegistrySpec): string {
       bind: entry.bind,
       port: entry.port,
       artifacts_port: entry.artifacts_port,
+      hosts: entry.hosts,
       enabled: entry.enabled,
       residency: entry.residency,
       idle_seconds: entry.idle_seconds,

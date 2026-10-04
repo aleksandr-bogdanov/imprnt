@@ -49,10 +49,24 @@ import {
   boardBindNotAddress,
   boardArtifactsPort,
   boardBindWide,
+  boardHosts,
   boardPort,
   cardBroken,
+  cardHeld,
   cardOk,
+  chatBusy,
+  chatHealthy,
+  chatPaused,
+  chatRetryAt,
+  chatRetrying,
+  chatStuck,
+  chatUnreachable,
+  overviewChats,
+  overviewFindings,
+  cardQueued,
+  cardStale,
   cardWaiting,
+  turnReason,
   checkClean,
   checkRan,
   editApplied,
@@ -281,6 +295,85 @@ test("D-253 the nine page strings and the one finding line are pinned whole in b
     "vault-sync в реестре остановлен, а менеджер служб всё ещё держит его запущенным.",
     ["vault-sync"],
   );
+});
+
+test("the hosts refusal, the three other card states and every turn reason are pinned whole in both languages", () => {
+  pinned(
+    boardHosts,
+    { id: "board", value: '["*.example.ts.net"]' },
+    'board has hosts ["*.example.ts.net"], and hosts is a list of this machine\'s exact names: each a hostname with no port, no wildcard and no trailing dot. The bind address is always accepted.',
+    'board указывает hosts ["*.example.ts.net"], а hosts - это список точных имён машины: каждое - имя хоста без порта, без * и без точки в конце. Адрес bind принимается всегда.',
+    ['["*.example.ts.net"]'],
+  );
+  // An open message is not a turn that is running, so each state is its own
+  // sentence, and "answering" stays the one sentence about running work.
+  pinned(cardQueued, { count: 1 }, "1 message waiting to be picked up", "ждут, пока их возьмут, сообщений: 1", ["1"]);
+  pinned(cardQueued, { count: 2 }, "2 messages waiting to be picked up", "ждут, пока их возьмут, сообщений: 2", ["2"]);
+  // Said only of an original input whose hold is NOT released; a released one
+  // is not current activity and has no sentence at all.
+  pinned(cardHeld, { count: 1 }, "1 message held, waiting for a recovery choice", "удержано, ждёт решения о восстановлении, сообщений: 1", ["1"]);
+  pinned(cardHeld, { count: 3 }, "3 messages held, waiting for a recovery choice", "удержано, ждёт решения о восстановлении, сообщений: 3", ["3"]);
+  pinned(cardStale, { count: 1 }, "1 message unfinished, with nothing working on it", "не завершено, никто не работает, сообщений: 1", ["1"]);
+  pinned(cardStale, { count: 2 }, "2 messages unfinished, with nothing working on them", "не завершено, никто не работает, сообщений: 2", ["2"]);
+  for (const language of ["en", "ru"] as Language[]) {
+    for (const line of [cardQueued, cardHeld, cardStale]) {
+      expect(line(language, { count: 2 })).not.toMatch(/answering|отвечает|\bowed\b/i);
+    }
+  }
+
+  const at = "2026-10-04 00:30 UTC";
+  const reason = (key: string, values: Record<string, unknown>) => (language: Language) => turnReason(language, key, values);
+  const pins: [string, Record<string, unknown>, string, string][] = [
+    ["answering", { runner: "runner-a", at }, `runner-a is answering it, since ${at}.`, `runner-a отвечает на него с ${at}.`],
+    ["hold", { at, cause: "interrupted" }, `held since ${at}: the attempt is over and did not finish.`, `удержано с ${at}: попытка завершилась, не закончив работу.`],
+    ["continuing", { at }, `held since ${at}: the owner chose to continue it, and the continuation carries the work.`, `удержано с ${at}: владелец выбрал продолжить, работу несёт продолжение.`],
+    ["owner-gone", { runner: "runner-a" }, "runner-a took it and is not working on it now.", "runner-a взял его и сейчас над ним не работает."],
+    ["orphaned", {}, "it was started and no runner holds it now.", "работа была начата, и сейчас его не держит ни один раннер."],
+    ["ownership-unknown", { runner: "runner-a" }, "it is not known whether runner-a is still running it.", "неизвестно, выполняет ли его runner-a до сих пор."],
+    ["not-held", { runner: "runner-a" }, "runner-a stopped part way and no decision was asked for.", "runner-a остановился на полпути, и решения не запрашивали."],
+    ["claimed", { runner: "runner-a" }, "runner-a picked it up and has not started yet.", "runner-a взял его и ещё не начал."],
+    ["retry", { at }, `waiting to try again at ${at}.`, `ждёт повторной попытки в ${at}.`],
+    ["unclaimed", { at }, `waiting for a runner since ${at}.`, `ждёт раннера с ${at}.`],
+  ];
+  for (const [key, values, en, ru] of pins) {
+    const line = reason(key, values);
+    expect(line("en"), key).toBe(en);
+    expect(line("ru"), key).toBe(ru);
+    for (const language of ["en", "ru"] as Language[]) {
+      expect(line(language)).not.toContain(MACHINERY_LINES.en);
+      expect(line(language)).not.toContain(MACHINERY_LINES.ru);
+    }
+  }
+  // A reason nobody pinned is not invented: it is said as the queue.
+  expect(turnReason("en", "something-new", { at })).toBe(`waiting for a runner since ${at}.`);
+  // A value cannot write a second line.
+  expect(turnReason("en", "claimed", { runner: "one\ntwo" })).not.toContain("\n");
+});
+
+test("the first screen's chat lines and headline are pinned whole in both languages, and none says owed or OK", () => {
+  const at = "14:02 UTC";
+  pinned(chatHealthy, {}, "healthy, nothing waiting", "в норме, ничего не ждёт");
+  pinned(chatBusy, { kind: "human", at }, `busy: answering a message since ${at}`, `занят: отвечает на сообщение с ${at}`, [at]);
+  pinned(chatBusy, { kind: "report", at }, `busy: working on a job's report since ${at}`, `занят: разбирает отчёт задачи с ${at}`, [at]);
+  pinned(chatStuck, { why: "runner-a took it and is not working on it now." }, "stuck: runner-a took it and is not working on it now.",
+    "застрял: runner-a took it and is not working on it now.", ["runner-a took it and is not working on it now."]);
+  // One state per line: the cause after the state's one colon, and when it is
+  // tried again (or the door's recorded cause) on the line beneath.
+  pinned(chatRetrying, { cause: "model overloaded" }, "retrying: model overloaded", "повтор: model overloaded", ["model overloaded"]);
+  pinned(chatRetryAt, { at }, `trying again at ${at}.`, `следующая попытка в ${at}.`, [at]);
+  pinned(chatUnreachable, {}, "stuck: the door cannot reach this chat", "застрял: чат недоступен для двери");
+  pinned(chatPaused, {}, "paused: answers nothing until it is woken", "на паузе: ничего не отвечает, пока его не разбудят");
+  pinned(overviewChats, { problems: 0, chats: 1 }, "The one chat is working.", "Все чаты работают: 1.");
+  pinned(overviewChats, { problems: 0, chats: 6 }, "All 6 chats are working.", "Все чаты работают: 6.", ["6"]);
+  pinned(overviewChats, { problems: 2, chats: 6 }, "2 of 6 chats need attention.", "Требуют внимания чатов: 2 из 6.", ["2", "6"]);
+  pinned(overviewFindings, { count: 0 }, "The check sheet holds no findings.", "В листе проверки замечаний нет.");
+  pinned(overviewFindings, { count: 1 }, "The check sheet holds 1 finding.", "Замечаний в листе проверки: 1.", ["1"]);
+  pinned(overviewFindings, { count: 4 }, "The check sheet holds 4 findings.", "Замечаний в листе проверки: 4.", ["4"]);
+  for (const language of ["en", "ru"] as Language[]) {
+    for (const line of [chatHealthy(language), chatPaused(language), chatBusy(language, { at }), overviewChats(language, { problems: 0, chats: 2 })]) {
+      expect(line).not.toMatch(/\bowed\b|\bOK\b/);
+    }
+  }
 });
 
 test("D-253 no operator or page sentence carries the machinery marker, and a marked line still does", () => {

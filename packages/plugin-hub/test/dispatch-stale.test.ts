@@ -60,7 +60,7 @@ test("D-213 an open job past its person's threshold plus the grace is a finding 
   const store = await superStore(cluster, it.db)
   const now = new Date()
   const ago = (seconds: number) => new Date(now.getTime() - seconds * 1000).toISOString()
-  const check = async () => (await runCheck({ machine: "pi", registryFile: it.registryFile, store,
+  const check = async () => (await runCheck({ disk: null, machine: "pi", registryFile: it.registryFile, store,
     os: null, kernel: null, credentials: fakeProber({}), now })) as Finding[]
   const plant = async (id: string, agent: string, person: string, seconds: number) => {
     await it.read.sql(

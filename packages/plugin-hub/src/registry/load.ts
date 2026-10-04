@@ -11,6 +11,7 @@ import {
   boardBindMissing,
   boardBindNotAddress,
   boardBindWide,
+  boardHosts,
   boardPort,
   enabledNotBoolean,
   enabledOnBoard,
@@ -49,6 +50,11 @@ const ROLLOUT_DEFAULTS: Record<string, number> = {
   "council.overrun_minutes": 30,
   "council.status_write_seconds": 5,
   "council.status_edit_seconds": 10,
+  // How little room the filesystems under this machine's state, secrets, trees and vaults may have left before `check`
+  // says so, crossing either one: mebibytes available to the hub's account, and percent of the filesystem. Chosen, not
+  // measured: 5 GiB and 10% leave a Pi's card time to be cleared by hand. Setting either to 1 all but silences that half.
+  "hub.disk_free_min_mb": 5120,
+  "hub.disk_free_min_percent": 10,
 };
 
 export const SETTING_FIELDS: SettingField[] = [
@@ -433,6 +439,19 @@ export interface RunEntry {
    */
   artifacts_port?: number;
   /**
+   * The names this board is also opened by, besides its bind address: a
+   * machine's short tailnet name and its full one, for example
+   * `["hub-device", "hub-device.example.ts.net"]`.
+   *
+   * EXACT NAMES, NEVER A PATTERN. A request is served when its `Host` is the
+   * bind address or one of these names, letter case aside, with the board's own
+   * port. Nothing is resolved and nothing matches by suffix: a name a household
+   * did not write here is a name a website could have pointed at this address,
+   * and it is refused exactly as before. Absent means the address alone, and the
+   * loader carries the names in lower case.
+   */
+  hosts?: string[];
+  /**
    * The recognizer's other two. `residency` says whether the model is held
    * between notes or dropped after `idle_seconds` of quiet, and only the one
    * that drops it has an idle window anything reads.
@@ -804,6 +823,9 @@ export const HARVEST_DEFAULTS = {
 /** The three window thresholds, percent, on a `paid = "plan"` preset. */
 const WINDOW_KEYS = ["window_pause_at", "window_notice_at", "window_hold_at"] as const;
 
+/** The longest `presets.<name>.description` a preview carries under the agent line. */
+export const PRESET_DESCRIPTION_MAX = 120;
+
 /** The five, alphabetical, which is the order the derived id hashes them in. */
 export const PRESET_KEYS = ["adapter", "effort", "model", "paid", "provider"] as const;
 
@@ -1020,6 +1042,19 @@ function describeBare(value: unknown): string {
 }
 
 /**
+ * Whether a text is one exact host name: dot-separated labels of letters,
+ * digits and inner hyphens, at most 63 characters each and 253 in all, the last
+ * one not all digits, because a browser reads such a name as an IPv4 address
+ * and sends the address instead. No wildcard, no port, no trailing dot.
+ */
+function isHostName(text: string): boolean {
+  if (text.length === 0 || text.length > 253 || isIP(text) !== 0) return false;
+  const labels = text.split(".");
+  if (/^\d+$/.test(labels[labels.length - 1])) return false;
+  return labels.every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label));
+}
+
+/**
  * The key a reader asks for, with any command-line decoration taken off: a
  * leading dash run and anything glued on after an `=`. The spelling is all that
  * is stripped. The value that came with it is dropped on the floor and the
@@ -1087,6 +1122,9 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     const value = valueAt(parsed, key);
     if (value !== undefined) positive(value, key);
   }
+  const diskPercent = valueAt(parsed, "hub.disk_free_min_percent");
+  if (typeof diskPercent === "number" && diskPercent > 100)
+    refuse("hub.disk_free_min_percent", 0, "hub.disk_free_min_percent must be a percentage, at most 100");
   const batch = valueAt(parsed, "hub.cutover_batch");
   if (batch !== undefined && (typeof batch !== "string" || !/^[A-Za-z0-9_-]+$/.test(batch)))
     refuse("hub.cutover_batch", 0, "hub.cutover_batch must be a nonempty batch ID");
@@ -1461,6 +1499,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     // The address and the port, asked of a BOARD entry and of nothing else.
     // The loader tolerates either key on another kind the way it tolerates any
     // key it has no rule about.
+    let hostNames: string[] | undefined;
     if (entry.kind === "board") {
       const bind = entry.bind;
       if (bind === undefined || bind === null || bind === "") {
@@ -1509,6 +1548,20 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
           shows === port)
       ) {
         refuse(`${at}.artifacts_port`, here, boardArtifactsPort("en", { id, value: describeBare(shows) }));
+      }
+      // The names it is also opened by, each one exact. A wildcard, a suffix, a
+      // port, a trailing dot and an address are refused rather than read as
+      // something nearby: what this list admits is a Host a website cannot
+      // choose, and a pattern is a Host a website can.
+      const hosts = entry.hosts;
+      if (hosts !== undefined && hosts !== null) {
+        if (!Array.isArray(hosts) || !hosts.every((one) => typeof one === "string" && isHostName(one))) {
+          refuse(`${at}.hosts`, here, boardHosts("en", {
+            id,
+            value: Array.isArray(hosts) ? JSON.stringify(hosts) : describeBare(hosts),
+          }));
+        }
+        hostNames = [...new Set((hosts as string[]).map((one) => one.toLowerCase()))];
       }
     }
 
@@ -1846,6 +1899,7 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         : entry.kind === "backup" ? ["destination", "standalone_dump", ...BACKUP_ARGVS, ...BACKUP_RETENTION_ARGVS]
         : entry.kind === "watch" ? ["source", "person", ...SENTRY_KEYS, ...HUNT_KEYS] : [])
         .filter(key => entry[key] !== undefined).map(key => [key, entry[key]])),
+      ...(hostNames === undefined ? {} : { hosts: hostNames }),
       ...(childLimit === undefined ? {} : { child_memory_limit_mb: childLimit }),
     });
   });
@@ -1903,6 +1957,31 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
         here,
         `${name} is paid for by ${describe(paid)}, and the two this hub has are ` +
           `${PAID_KINDS.join(" and ")}`,
+      );
+    }
+    // A description is what a person reads under the agent in a topic chat's
+    // preview, so it is one short line or the file is refused. It is NOT one of
+    // the five settings: it is read off the raw table (`descriptionOfPreset`),
+    // so it changes no preset id and no turn record.
+    const description = table.description;
+    const notOneLine =
+      description === undefined
+        ? null
+        : typeof description !== "string"
+          ? `is ${describe(description)} rather than text`
+          : description.trim() === ""
+            ? "is blank"
+            : /[\u0000-\u001f\u007f]/.test(description)
+              ? "carries a line break or another control character"
+              : description.length > PRESET_DESCRIPTION_MAX
+                ? `is ${description.length} characters long`
+                : null;
+    if (notOneLine !== null) {
+      refuse(
+        `${where}.description`,
+        here,
+        `${name}'s description ${notOneLine}, and a description is one line of 1 to ` +
+          `${PRESET_DESCRIPTION_MAX} characters with no control characters`,
       );
     }
 

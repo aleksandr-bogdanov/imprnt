@@ -160,8 +160,13 @@ export const VALIDATED_SESSION_PAIRS: Readonly<Record<string, SessionPair>> = {
 
 const DEFAULT_TABLES: SessionTables = { builds: VALIDATED_SESSION_BUILDS, pairs: VALIDATED_SESSION_PAIRS };
 
-/** What a session's engine directory may hold beside `projects/` and still have been measured to resume when it was left out. They are never opened. */
-const NOT_CARRIED = new Map<string, "file" | "dir">([[".claude.json", "file"], [".credentials.json", "file"], ["backups", "dir"], ["sessions", "dir"]]);
+/**
+ * What a session's engine directory may hold beside `projects/` and still have been measured to resume when it was left out. They are never opened.
+ * `.last-cleanup` is the engine's own stamp of its periodic transcript cleanup: a real hub-launched 2.1.286 writes it on its first start, so
+ * without it no real Mac conversation could leave (measured live, Mac 2.1.286 <-> Pi 2.1.285, `live/prove-return-move.ts`); the destination's
+ * engine writes its own.
+ */
+const NOT_CARRIED = new Map<string, "file" | "dir">([[".claude.json", "file"], [".credentials.json", "file"], [".last-cleanup", "file"], ["backups", "dir"], ["sessions", "dir"]]);
 
 const BASE_CHARACTER = /^[A-Za-z0-9-]$/;
 
@@ -442,7 +447,7 @@ export function makeClaudeSessionPort(
 
     /**
      * Reads only `config/`, and in it only the transcript. Every other entry of the engine directory is classified by
-     * `lstat` alone: `.claude.json`, `.credentials.json`, `backups/` and `sessions/` are measured as not needed and are
+     * `lstat` alone: `.claude.json`, `.credentials.json`, `.last-cleanup`, `backups/` and `sessions/` are measured as not needed and are
      * never opened (a login is split out of the session by the launch, and is not this port's to read); anything else
      * (`file-history/`, `todos/`, a `<uuid>/` side directory, a second transcript) is state nobody measured a move
      * without, and is `native_side_state_unsupported`, naming it. That is the cheapest next measurement, and the refusal

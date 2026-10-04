@@ -43,8 +43,7 @@ export async function checkLoopSource(registry: unknown, presetName: string, pro
     return;
   }
   if (adapter === openCode.name) {
-    // The production activation prerequisite is checked before any credential
-    // read or version process. The diagnostic harness is not a source-check bypass.
+    // Use the same credential and binary checks as the production adapter.
     await openCode.capabilities!({ registry, agent: { id: "check", preset: presetName }, preset: presetName, probe });
     return;
   }

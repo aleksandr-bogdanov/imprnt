@@ -36,7 +36,7 @@ import { join } from "node:path";
 import { hubPath, startCluster, statementWatch, until, type Cluster } from "./helpers/cluster.ts";
 import { stageHub, type StagedHub } from "./helpers/hub-fixture.ts";
 import { cpuSeconds } from "./helpers/cpu.ts";
-import { BOARD_AUTH, provisionBoardAuth, freePort } from "./helpers/board.ts";
+import { freePort } from "./helpers/board.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import { boardBindFailed } from "../src/door/lines.ts";
 import { programForKind } from "../src/hub/program.ts";
@@ -115,7 +115,6 @@ async function stage(bind = "127.0.0.1"): Promise<{ it: StagedHub; entry: RunSpe
     people: [{ id: "p1", tree }],
     run: [DOOR_ENTRY, RUNNER_ENTRY, entry],
   });
-  provisionBoardAuth(it.registryFile, entry.id);
   return { it, entry };
 }
 
@@ -142,7 +141,7 @@ async function startBoard(it: StagedHub, entry: RunSpec): Promise<BoardProcess> 
         throw new Error(`the board exited ${proc.exitCode}: ${(await errors).slice(0, 400)}`);
       }
       try {
-        return (await fetch(`${url}/`, { redirect: "manual", headers: { authorization: BOARD_AUTH } })).status === 200;
+        return (await fetch(`${url}/`, { redirect: "manual" })).status === 200;
       } catch {
         return false;
       }
@@ -199,7 +198,7 @@ test(
       board = await startBoard(it, entry);
       // One page fetched, so what is measured is a board that has rendered and
       // is waiting rather than one that has not opened its store yet.
-      for (const path of PAGES) expect((await fetch(`${board.url}${path}`, { headers: { authorization: BOARD_AUTH } })).status).toBe(200);
+      for (const path of PAGES) expect((await fetch(`${board.url}${path}`)).status).toBe(200);
       // The counter's own connection is opened and used BEFORE the window, so
       // what it costs inside the window is one statement and nothing else.
       await counter.unsafe("select 1 as warm");
@@ -263,11 +262,11 @@ test(
     };
     try {
       board = await startBoard(it, entry);
-      for (const path of PAGES) await fetch(`${board.url}${path}`, { headers: { authorization: BOARD_AUTH } });
+      for (const path of PAGES) await fetch(`${board.url}${path}`);
       await counter.unsafe("select 1 as warm");
 
       const sweep = await statementWatch(cluster, [await it.read.pid()]);
-      for (const path of PAGES) expect((await fetch(`${board.url}${path}`, { headers: { authorization: BOARD_AUTH } })).status).toBe(200);
+      for (const path of PAGES) expect((await fetch(`${board.url}${path}`)).status).toBe(200);
       await counter.unsafe("select 'the deliberate statement' as said");
       const lines = await sweep.lines();
       expect(lines.length).toBeGreaterThan(1);
@@ -288,7 +287,7 @@ test(
           socket: {
             open(socket) {
               socket.write(
-                `GET / HTTP/1.1\r\nHost: ${entry.bind}:${entry.port}\r\nAuthorization: ${BOARD_AUTH}\r\nConnection: keep-alive\r\n\r\n`,
+                `GET / HTTP/1.1\r\nHost: ${entry.bind}:${entry.port}\r\nConnection: keep-alive\r\n\r\n`,
               );
             },
             data(socket, chunk) {
@@ -363,7 +362,7 @@ test(
     let board: BoardProcess | null = null;
     try {
       board = await startBoard(it, entry);
-      expect((await fetch(`${board.url}/`, { headers: { authorization: BOARD_AUTH } })).status).toBe(200);
+      expect((await fetch(`${board.url}/`)).status).toBe(200);
     } finally {
       await board?.stop();
       await it.stop();

@@ -97,6 +97,9 @@ export async function appendNotice(
  * person and the agent come off the outbox row when there is no message to read
  * them off. A naive left join silently drops every notice instead, because
  * `i.state not in (...)` is NULL for a row with no `i`.
+ *
+ * A part behind an earlier part that failed, or that an operator dismissed, is
+ * held back with it: a dismissal never releases the parts after it.
  */
 export async function readPendingChunks(
   store: StoreLike,
@@ -119,7 +122,7 @@ export async function readPendingChunks(
           (o.kind = 'notice' and earlier.kind = 'notice' and
             regexp_replace(earlier.notice_key, ':part:[0-9]+$', '') = regexp_replace(o.notice_key, ':part:[0-9]+$', '')))
           and earlier.seq_in_reply < o.seq_in_reply
-          and earlier.delivered_at is null and earlier.delivery_state = 'failed')
+          and earlier.delivered_at is null and earlier.delivery_state in ('failed', 'dismissed'))
       and (o.kind = 'notice' or i.state not in ('acked', 'started'))
     order by coalesce((select min(first.id) from outbox first where first.inbound_id = o.inbound_id), o.id), o.seq_in_reply`) as unknown as PendingChunk[];
 }

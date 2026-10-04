@@ -6,7 +6,7 @@ import { stageHub, insertInbound, PERSON, RUNNER, AGENT, DOOR, CHAT } from "./he
 import { requestHoldChoice } from "../src/door/recovery.ts";
 import { loadRegistry } from "../src/registry/load.ts";
 import type { StoreLike } from "../src/store/connect.ts";
-import { openCode } from "../src/adapters/opencode.ts";
+import { blockedAdapter } from "./helpers/blocked-adapter.ts";
 import { insertJob } from "./helpers/conversations.ts";
 import { observe, retrySettings } from "./helpers/rollout-runner.ts";
 import { runRunner } from "../src/runner/run.ts";
@@ -111,8 +111,10 @@ test("failed Codex input stays held while authorized fresh_context completes new
     expect(JSON.parse(oldBytes).dirty).toBe(true);
     const holdBefore = await it.read.sql("select state, revision, choice from replay_hold where inbound_id='codex-failed'");
     await runner.stop();
-    runner = await runRunner({ runner: RUNNER, registryFile: it.registryFile,
-      adapters: { [it.adapterName]: { ...adapter, activationBlock: openCode.activationBlock } } });
+    // The same adapter declaring a block: the runner must leave new input unclaimed and never start it.
+    const blocked = { ...adapter, activationBlock: blockedAdapter(it.adapterName).activationBlock };
+    runner = await runRunner({ runner: RUNNER, registryFile: it.registryFile, adapters: { [it.adapterName]: blocked } });
+    expect(await observe(async () => ((await it.read.sql("select data from state_row where sheet='agent_health' and id=$1", [AGENT]))[0]?.data as { cause?: string } | undefined)?.cause === "configured-engine-unavailable")).toBe(true);
     await insertInbound(cluster, it.db, { id: "codex-new", body: "new authorized input" });
     await Bun.sleep(1200);
     expect((await it.read.inbound()).find(row => row.id === "codex-new")).toMatchObject({ state: "received", claimed_by: null });

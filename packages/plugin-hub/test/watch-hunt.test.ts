@@ -590,6 +590,7 @@ test(
     try {
       store = await superStore(cluster, staged.it.db);
       const check = async (now: Date) => (await runCheck({
+        disk: null,
         machine: HERE, registryFile: staged.it.registryFile, store: store!, os: null, kernel: null, credentials: fakeProber({}), now,
       })) as Finding[];
       const about = (found: Finding[]) => found.filter((one) => one.kind.startsWith("watch-"));

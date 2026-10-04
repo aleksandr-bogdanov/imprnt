@@ -60,7 +60,7 @@ for (const fault of ["start", "feed"] as const) test(`ROLL-10 ${fault} task fail
     // next-answer predicate must reject it.
     if (defective) { await expect(accepting()).rejects.toThrow(); continue }
     healthyRetry(health)
-    const findings = await runCheck({ registryFile: it.registryFile, machine: "pi", store, os: null, kernel: null })
+    const findings = await runCheck({ disk: null, registryFile: it.registryFile, machine: "pi", store, os: null, kernel: null })
     expect(findings.some(f => f.subject === "p1-lair" && f.says.includes(`synthetic-task-${fault}-failure`)), "D-175 task failure must be a named finding").toBe(true)
     const retryAt = Date.parse(String(health!.data.retry_at))
     const diary = await it.read.ledger({ subject: "p1-lair" })

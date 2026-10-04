@@ -286,6 +286,63 @@ test("a board's artifacts port is its own port and no other, refused by key and 
   expect(Object.hasOwn(quiet, "artifacts_port")).toBe(false);
 });
 
+test("a board's hosts are exact names, refused by key and by line when one is a pattern, a port, an address or not a name", () => {
+  // WHAT IT BUYS: the Host fence admits the bind address and these names and
+  // nothing else, so a value that reads as a pattern would be a Host a website
+  // could choose. Each shape is refused on its own rather than read as
+  // something nearby.
+  for (const hosts of [
+    ["*.example.ts.net"],
+    ["hub-device", ".example.ts.net"],
+    ["hub-device:8794"],
+    ["hub-device.example.ts.net."],
+    ["100.64.0.1"],
+    ["1.2.3"],
+    ["2001:db8::1"],
+    ["hub device"],
+    ["hub_device"],
+    ["-hub"],
+    [""],
+    [7],
+  ] as unknown[][]) {
+    const { error, text } = refusalOf([DOOR, RUNNER, { ...EXAMPLE_BOARD, hosts: hosts as string[] }]);
+    expect(error.key, JSON.stringify(hosts)).toBe("run[2].hosts");
+    expect(error.line).toBe(lineOf(text, "board", "hosts"));
+    expect(error.reason).toBe(
+      `board has hosts ${JSON.stringify(hosts)}, and hosts is a list of this machine's exact names: each a hostname with no port, no wildcard and no trailing dot. The bind address is always accepted.`,
+    );
+  }
+  // A single string is not a list.
+  {
+    const staged = write([DOOR, RUNNER, EXAMPLE_BOARD]);
+    writeFileSync(staged.file, staged.text.replace("port = 8794\n", 'port = 8794\nhosts = "hub-device"\n'), "utf8");
+    let caught: unknown;
+    try {
+      loadRegistry(staged.file);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(RegistryRefused);
+    expect((caught as RegistryRefused).key).toBe("run[2].hosts");
+  }
+
+  // The controls. Short and full names load, in lower case and once each, and
+  // a board that names none carries no such key: its address alone opens it.
+  const { file } = write([DOOR, RUNNER, { ...EXAMPLE_BOARD, hosts: ["Hub-Device", "hub-device.Example.ts.net", "hub-device"] }]);
+  const board = listRunEntries(loadRegistry(file)).find((one) => one.id === "board")!;
+  expect(board.hosts).toEqual(["hub-device", "hub-device.example.ts.net"]);
+  const quiet = listRunEntries(loadRegistry(write([DOOR, RUNNER, EXAMPLE_BOARD]).file)).find((one) => one.id === "board")!;
+  expect(Object.hasOwn(quiet, "hosts")).toBe(false);
+  // A key the loader has no rule about elsewhere stays ignored there.
+  const elsewhere = listRunEntries(loadRegistry(write([{ ...DOOR, hosts: ["*"] }, RUNNER]).file)).find((one) => one.id === DOOR.id)!;
+  expect(Object.hasOwn(elsewhere, "hosts")).toBe(false);
+});
+
+test("the shipped example registry's board names its hosts with generic example names", () => {
+  const text = readFileSync(hubPath("src/registry/registry.example.toml"), "utf8");
+  expect(text).toContain('hosts = ["hub-device", "hub-device.example.ts.net"]');
+});
+
 test("D-244 whether the hub keeps an entry running is asked of every kind, by key and by line", () => {
   // The field is not a board's. It is the one place a household says it does
   // not want a piece up, and the hub re-reads the file on every tick, so it is

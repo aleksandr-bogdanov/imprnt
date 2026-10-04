@@ -68,10 +68,11 @@ const HERE_ONLY: Partial<Record<"macos" | "linux", Ran>> =
 const INVENTORY: Row[] = [
   {
     requirement: "RUN-05, the list, the OS state, the difference",
-    observation: "the entries, what the manager says about them, and what the check sheet says about the other machine",
+    observation: "the entries, what the manager says about them, and every entry declared for the other machine with what the store recorded about it",
     seams: ["A", "K"],
     evidence: [
       { seam: "A", file: "test/board-pages.test.ts", runs: BOTH },
+      { seam: "A", file: "test/board-functional.test.ts", runs: BOTH },
       { seam: "K", file: "test/board-native.test.ts", runs: HERE_ONLY },
     ],
     acceptance: [],
@@ -79,7 +80,7 @@ const INVENTORY: Row[] = [
   },
   {
     requirement: "RUN-05, the acts and the Forbidden line",
-    observation: "restart through the one shipped verb, stop as a registry field, no board code touching an acting verb, and an act taken only from an authenticated operator and the board's own page",
+    observation: "restart through the one shipped verb, stop as a registry field, no board code touching an acting verb, and an act taken only from another device on the tailnet and the board's own page",
     seams: ["A", "C"],
     evidence: [
       { seam: "A", file: "test/board-acts.test.ts", runs: BOTH },

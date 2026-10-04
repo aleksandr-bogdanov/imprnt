@@ -106,7 +106,7 @@ interface Staged {
   stop(): Promise<void>;
 }
 
-async function stage(): Promise<Staged> {
+async function stage(peer?: unknown): Promise<Staged> {
   const trees: Record<string, string> = {
     p1: scratchDir("hub-art-p1-"),
     p2: scratchDir("hub-art-p2-"),
@@ -146,6 +146,7 @@ async function stage(): Promise<Staged> {
     entryId: boardEntry.id,
     store,
     os: recordingSeam(plantedSeam(FLAVOUR).os).os,
+    peer,
   });
   return {
     it,
@@ -275,6 +276,28 @@ test(
       }
     } finally {
       await staged.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "nothing on the board's own machine is served an artifact, and another device is",
+  async () => {
+    // EVERY AGENT BOX ON THIS MACHINE SHARES ITS NETWORK, and the box hides
+    // every other person's tree. An artifact served to this machine would be
+    // one person's agent reading another person's files through the board.
+    for (const [peer, served] of [["production", false], [() => null, false], [() => "192.0.2.10", true]] as [unknown, boolean][]) {
+      const staged = await stage(peer);
+      try {
+        for (const path of ["/artifacts/p1/index.html", "/artifacts/p1/note.txt"]) {
+          const answer = await staged.board.artifact(path);
+          expect(answer.status, `${path} for ${String(peer)}`).toBe(served ? 200 : 404);
+          if (!served) expect((await answer.text()).trim()).toBe(pageMissing("en"));
+        }
+      } finally {
+        await staged.stop();
+      }
     }
   },
   SLOW,

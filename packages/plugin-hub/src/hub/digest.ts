@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { putRow, readSheet } from "../records/statesheet.ts";
 import { listMachines } from "../registry/entries.ts";
 import { readSetting, registryDigest } from "../registry/load.ts";
@@ -28,14 +29,20 @@ export function storeMachineOf(registry: unknown): string | null {
   return typeof named === "string" && named !== "" && listMachines(registry).some((one) => one.id === named) ? named : null;
 }
 
-/** What this machine's hub says the registry is, written on its tick. */
+/**
+ * What this machine's hub says the registry is, written on its tick: the
+ * digest, and the file it runs with on this machine's disk, which is the one
+ * place another machine's board learns what a command run here must name.
+ */
 export async function recordRegistryDigest(store: StoreLike, machine: string, file: string): Promise<void> {
-  await putRow(store, REGISTRY_SHEET, machine, { sha256: registryDigest(file), at: new Date().toISOString() });
+  await putRow(store, REGISTRY_SHEET, machine, { sha256: registryDigest(file), file: resolve(file), at: new Date().toISOString() });
 }
 
 export interface RegistryDigestRow {
   machine: string;
   sha256: string;
+  /** The file that machine's hub runs with, or "" from a hub that predates saying so. */
+  file: string;
   at: string;
 }
 
@@ -43,6 +50,7 @@ export async function readRegistryDigests(store: StoreLike): Promise<RegistryDig
   return (await readSheet(store, REGISTRY_SHEET)).map((row) => ({
     machine: row.id,
     sha256: String(row.data.sha256 ?? ""),
+    file: typeof row.data.file === "string" ? row.data.file : "",
     at: String(row.data.at ?? ""),
   }));
 }

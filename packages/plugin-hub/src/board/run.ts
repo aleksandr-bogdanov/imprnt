@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import type { LoopProbeOptions } from "../adapters/launch.ts";
 import { runCheck, CHECK_SHEET } from "../check/run.ts";
 import type { CredentialProber } from "../check/credentials.ts";
@@ -13,21 +14,28 @@ import {
   safeValue,
 } from "../door/lines.ts";
 import { requestRecovery } from "../hub/control.ts";
+import { readRegistryDigests } from "../hub/digest.ts";
 import { readPeaks } from "../hub/peak.ts";
 import { readStatus } from "../hub/status.ts";
 import { readStampMetrics } from "../metrics/stamps.ts";
 import { readSheet } from "../records/statesheet.ts";
 import { lifetimeFor, listAgents, listMachines, listPeople, listRunEntries, voiceFor } from "../registry/entries.ts";
-import { loadRegistry, NEVER_STOPPED, readSetting, type RunEntry } from "../registry/load.ts";
+import { loadRegistry, NEVER_STOPPED, readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
-import { readOpenTurns } from "../store/turns.ts";
+import { markResolvedRetries } from "../store/health.ts";
 import { readVoiceHealth } from "../voice/health.ts";
-import { sameAddress } from "../net/address.ts";
-import { authenticateBoard, boardSignIn, type BoardViewer } from "./auth.ts";
+import { isLocalAddress, sameAddress } from "../net/address.ts";
 import { serveArtifact } from "./artifacts.ts";
 import { readChatNewest, readChatPage, type ChatNewest } from "./chats.ts";
-import { chatPage, chatsPage, findingsPage, machinesPage, metricsPage, peoplePage, usagePage, type CheckRow, type ControlRow } from "./pages.ts";
+import { readApprovals, readRemoteFacts, type RemoteFact } from "./fleet.ts";
+import { FONT_FILES } from "./html.ts";
+import {
+  chatPage, chatsPage, findingsPage, metricsPage, overviewPage, peoplePage, usagePage,
+  type CheckRow, type ControlRow, type FixContext, type FleetFacts,
+} from "./pages.ts";
+import { REGISTRY_PLACEHOLDER, requestCause } from "./plain.ts";
+import { readTurnStates } from "./turns.ts";
 import { readUsage, readWindows } from "./usage.ts";
 
 /**
@@ -42,9 +50,18 @@ import { readUsage, readWindows } from "./usage.ts";
  * a measured property and not a promise: `test/board-idle.test.ts` counts the
  * statements and the processor time.
  *
- * Board credentials are private verifier files in the already masked hub
- * secrets directory. Every request authenticates a named reader or operator;
- * local and remote peers receive the same identity checks.
+ * THE TAILNET IS THE TRUST BOUNDARY, by the owner's ruling. The board binds to
+ * one specific address and answers anybody who can reach it there under one of
+ * its own names; it asks nobody to sign in and reads no credential, an account
+ * verifier left on disk by an earlier build included. What stays in front of
+ * every request is the fence a browser needs: the Host must be the board's own,
+ * a request another page sent is refused, no page can be framed, and an act,
+ * a chat or an artifact whose peer is this machine is refused, because every
+ * agent on this box shares its network.
+ *
+ * THE BOARD HOLDS NO STATE OF ITS OWN. It opens no file for writing anywhere,
+ * samples nothing and keeps no index. Every page is a read of the one store,
+ * the OS seam or the chat log files on this machine.
  *
  * THE CHATS PAGE IS THE ONE PAGE THAT SHOWS WHAT WAS SAID, by the owner's
  * ruling, and it reads the door's own files on this machine and issues no
@@ -85,6 +102,13 @@ export interface BoardOptions {
    * own, because opening a household's real login from a test is not a test.
    */
   check?: { credentials?: CredentialProber; kernel?: KernelView | null; loopProbe?: LoopProbeOptions };
+  /**
+   * Who a request came from, as an address. The default is the server's own
+   * answer, the socket's peer, and never a header the asker wrote. A check
+   * hands in its own, because a check in this runtime IS this machine and the
+   * rule below is about which machine asked.
+   */
+  peer?: (request: Request, server: PeerReader) => string | null;
   now?: () => Date;
 }
 
@@ -168,7 +192,9 @@ function noticeFrom(params: URLSearchParams): string | null {
     case "actRequested":
       return actRequested("en", { target });
     case "actRefused":
-      return actRefused("en", { target, cause: params.get("cause") ?? "" });
+      // Reduced again here and not only where it was written: a query is
+      // anybody's to type, and a page repeats one plain line of it at most.
+      return actRefused("en", { target, cause: requestCause(params.get("cause") ?? "") });
     case "editApplied":
       return editApplied("en", { field: params.get("field") ?? "", value: params.get("value") ?? "", target });
     case "editUnavailable":
@@ -213,74 +239,140 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     }
   };
 
-  const machines = async (notice: string | null): Promise<Response> => {
-    const registry = loadRegistry(registryFile);
-    const controls = (await sheet("control")).map((row) => ({
-      ...(row.data as unknown as ControlRow),
-      id: row.id,
-    }));
-    return html(
-      machinesPage({
-        machine,
-        entries: listRunEntries(registry),
-        machines: listMachines(registry),
-        status: await liveStatus(),
-        findings: await findings(),
-        peaks: await readPeaks(store),
-        acts: controls,
-        notice,
-      }),
-    );
+  /**
+   * Where a `check` command is run and which registry file it names there:
+   * this board's own file on this machine, and for another machine the file its
+   * hub reported beside its digest, read from the one sheet every hub writes.
+   */
+  const fixContext = async (registry: unknown, shown: CheckRow[]): Promise<FixContext> => {
+    const declared = listMachines(registry);
+    const files: Record<string, string> = {};
+    // Read only when a command on the page has a file to fill in: a page with
+    // no such command has no use for the sheet.
+    if (shown.some((one) => String(one.fix ?? "").includes(REGISTRY_PLACEHOLDER))) {
+      for (const row of await readRegistryDigests(store)) if (row.file !== "") files[row.machine] = row.file;
+    }
+    return {
+      here: machine,
+      registryFile,
+      machines: declared.map((one) => one.id),
+      files,
+      routesDiffer: declared.some((one) => one.store_url !== undefined),
+    };
   };
 
-  const people = async (notice: string | null, viewer: BoardViewer): Promise<Response> => {
-    const registry = loadRegistry(registryFile);
+  /** The people facts the first screen and the people page share: every agent, its lifetime and where its messages stand. */
+  const agentFacts = async (registry: unknown) => {
     const agents = listAgents(registry);
-    const openTurns: Record<string, number> = {};
-    for (const agent of agents) {
-      openTurns[agent.id] = (await readOpenTurns(store, { agent: agent.id })).length;
-    }
     const lifetimes: Record<string, { mode: string; sleeping: boolean }> = {};
     for (const agent of agents) {
       const life = lifetimeFor(registry, agent.id);
       lifetimes[agent.id] = { mode: life.mode, sleeping: life.sleeping };
     }
+    return {
+      people: listPeople(registry),
+      agents,
+      lifetimes,
+      turns: await readTurnStates(store, agents.map((agent) => agent.id)),
+      // A retry an operator resolved is marked, so the line agrees with `check`.
+      agentHealth: await markResolvedRetries(store, await sheet("agent_health")),
+      doorHealth: await sheet("door_health"),
+    };
+  };
+
+  /**
+   * The first screen: every chat in one line each, what `check` holds, and
+   * the machines folded away with everything the machines page always showed.
+   */
+  const overview = async (notice: string | null): Promise<Response> => {
+    const registry = loadRegistry(registryFile);
+    const controls = (await sheet("control")).map((row) => ({
+      ...(row.data as unknown as ControlRow),
+      id: row.id,
+    }));
+    const entries = listRunEntries(registry);
+    const declared = listMachines(registry);
+    // Another machine's entries are what the store recorded about them, read
+    // in one statement, and not read at all on a household of one machine. A
+    // read that fails is said on every row as an observation that is not
+    // there, never as a blank a person takes for fine.
+    let remote: Record<string, RemoteFact> | null;
+    try {
+      remote = await readRemoteFacts(
+        store,
+        entries.filter((entry) => entry.machine !== "" && entry.machine !== machine && declared.some((one) => one.id === entry.machine)),
+      );
+    } catch {
+      remote = null;
+    }
+    const found = await findings();
     return html(
-      peoplePage({
-        people: listPeople(registry),
-        agents,
-        openTurns,
-        agentHealth: await sheet("agent_health"),
-        doorHealth: await sheet("door_health"),
-        lifetimes,
-        controlPerson: viewer.person,
-        findings: await findings(),
+      overviewPage({
+        machine,
+        entries,
+        machines: declared,
+        status: await liveStatus(),
+        findings: found,
+        peaks: await readPeaks(store),
+        remote,
+        acts: controls,
+        fix: await fixContext(registry, found),
         notice,
+        ...(await agentFacts(registry)),
+        now: now(),
       }),
     );
   };
 
-  const findingsOf = async (notice: string | null): Promise<Response> =>
-    html(findingsPage({ findings: await findings(), notice }));
+  const people = async (notice: string | null): Promise<Response> => {
+    const registry = loadRegistry(registryFile);
+    const facts = await agentFacts(registry);
+    const fleet: FleetFacts = {
+      runnerMachine: Object.fromEntries(listRunEntries(registry).filter((one) => one.kind === "runner").map((one) => [one.id, one.machine])),
+      presets: { ...(registry as Registry).presets },
+      approvals: await readApprovals(store),
+    };
+    return html(peoplePage({ ...facts, findings: await findings(), fleet, notice, now: now() }));
+  };
+
+  /**
+   * The findings page reads the sheet and nothing else it needs, so a registry
+   * that does not load still leaves it readable: its commands then keep the
+   * placeholder for every machine but this one.
+   */
+  const findingsOf = async (notice: string | null): Promise<Response> => {
+    const found = await findings();
+    let fix: FixContext;
+    try {
+      fix = await fixContext(loadRegistry(registryFile), found);
+    } catch {
+      fix = { here: machine, registryFile, machines: [] };
+    }
+    return html(findingsPage({ findings: found, fix, notice }));
+  };
 
   /** The state directory the door on this machine writes its logs under. */
   const stateDirOf = (registry: unknown): string => String(readSetting(registry, "hub.state_dir") ?? "");
 
-  const chats = async (viewer: BoardViewer): Promise<Response> => {
+  /**
+   * Every person's chats, by the owner's ruling: the household reads one
+   * board, and nothing on the tailnet is filtered per person.
+   */
+  const chats = async (): Promise<Response> => {
     // This machine's view, so a spoke reads its own state directory.
     const registry = loadRegistry(registryFile, { machine });
-    const people = listPeople(registry).filter(one => one.id === viewer.person);
-    const agents = listAgents(registry).filter(one => one.person === viewer.person);
+    const people = listPeople(registry);
+    const agents = listAgents(registry);
     const stateDir = stateDirOf(registry);
     const newest: Record<string, ChatNewest | null> = {};
     for (const agent of agents) {
       newest[agent.id] = stateDir === "" ? null : readChatNewest({ stateDir, person: agent.person, agent: agent.id });
     }
-    return html(chatsPage({ people, agents, newest, readerOnly: viewer.role === "reader" }));
+    return html(chatsPage({ people, agents, newest }));
   };
 
   /** One agent's chat, or the 404 for a person or an agent the file does not declare. */
-  const chat = async (parts: string[], before: string | null, viewer: BoardViewer): Promise<Response> => {
+  const chat = async (parts: string[], before: string | null): Promise<Response> => {
     let person: string;
     let agent: string;
     try {
@@ -290,13 +382,13 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       return missing();
     }
     const registry = loadRegistry(registryFile, { machine });
-    if (person !== viewer.person || !listPeople(registry).some((one) => one.id === person)) return missing();
+    if (!listPeople(registry).some((one) => one.id === person)) return missing();
     if (!listAgents(registry).some((one) => one.id === agent && one.person === person)) return missing();
     const stateDir = stateDirOf(registry);
     const read = stateDir === ""
       ? { days: [], older: null, exists: false }
       : readChatPage({ stateDir, person, agent, before });
-    return html(chatPage({ person, agent, chat: read, before, readerOnly: viewer.role === "reader" }));
+    return html(chatPage({ person, agent, chat: read, before }));
   };
 
   const usage = async (notice: string | null): Promise<Response> =>
@@ -320,25 +412,25 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return found?.kind === "door" ? "door" : "run";
   };
 
-  const restart = async (target: string, viewer: BoardViewer): Promise<Response> => {
+  const restart = async (target: string): Promise<Response> => {
     const registry = loadRegistry(registryFile);
     try {
       const row = (await requestRecovery(store, {
         id: crypto.randomUUID(),
         source: "board",
-        actor: `board:${viewer.id}`,
-        person: viewer.person,
+        // Nobody on this page is identified, and `board` is the true answer.
+        actor: "board",
         target_kind: kindOf(registry, target),
         target_id: target,
         registry,
         registryFile,
       })) as { status?: string; cause?: unknown };
       if (row?.status === "refused") {
-        return redirect("/", { said: "actRefused", target, cause: String(row.cause ?? "") });
+        return redirect("/", { said: "actRefused", target, cause: requestCause(row.cause ?? "") });
       }
       return redirect("/", { said: "actRequested", target });
     } catch (error) {
-      return redirect("/", { said: "actRefused", target, cause: (error as Error).message });
+      return redirect("/", { said: "actRefused", target, cause: requestCause(error) });
     }
   };
 
@@ -354,7 +446,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       await options.writeRegistryKey({ file: registryFile, table, id, key, value });
       return redirect(to, { said: "editApplied", field: key, value: String(value), target: id });
     } catch (error) {
-      return redirect(to, { said: "actRefused", target: id, cause: (error as Error).message });
+      return redirect(to, { said: "actRefused", target: id, cause: requestCause(error) });
     }
   };
 
@@ -372,6 +464,21 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       now: new Date(at),
     });
     return redirect("/findings", { said: "checkRan", count: String(rows.length), at });
+  };
+
+  /**
+   * One of the font files the pages name, from the plugin's own `assets/fonts`
+   * and nowhere else. The name is looked up in a fixed list, never joined onto
+   * a path as given, so `/fonts/` reads those files and no other. A font does
+   * not change between builds of one name, so a browser may keep it a day
+   * rather than fetch it on every page.
+   */
+  const font = async (name: string): Promise<Response> => {
+    const type = Object.hasOwn(FONT_FILES, name) ? FONT_FILES[name] : undefined;
+    if (type === undefined) return missing();
+    const file = Bun.file(fileURLToPath(new URL(`../../assets/fonts/${name}`, import.meta.url)));
+    if (!(await file.exists())) return missing();
+    return new Response(file, { status: 200, headers: { "content-type": type, "cache-control": "max-age=86400" } });
   };
 
   const artifact = async (path: string): Promise<Response> => {
@@ -402,18 +509,21 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
   };
 
   /**
-   * Whether a host names this listener: its own address, however spelled, and
-   * its own port.
+   * Whether a host names this listener: its own address, however spelled, or
+   * one of the exact names its entry lists, and its own port.
    *
-   * THE ADDRESS AND NOTHING ELSE, which is what makes rebinding a name at the
-   * browser useless and what it costs: a board is opened at
-   * `http://<bind>:<port>`, and a name that resolves to that address, a tailnet
-   * one included, is refused. A household that wants a name here would have to
-   * say which names, in the file.
+   * THE ADDRESS AND THE NAMES THE FILE WROTE, AND NOTHING ELSE, which is what
+   * makes rebinding a name at the browser useless. A website can point any
+   * name it owns at this address and its name then arrives here; it cannot
+   * make it one of the household's own names. So a name is compared whole,
+   * letter case aside, never by suffix and never by resolving it, and a name
+   * the file does not list is refused exactly as a foreign one is.
    */
+  const names = new Set((entry.hosts ?? []).map((one) => one.toLowerCase()));
   const isOwn = (host: string | null, port: number): boolean => {
     const parts = hostParts(host);
-    return parts !== null && parts.port === port && sameAddress(parts.address, entry.bind!);
+    if (parts === null || parts.port !== port) return false;
+    return sameAddress(parts.address, entry.bind!) || names.has(parts.address.toLowerCase());
   };
 
   /**
@@ -421,10 +531,11 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    *
    * `Sec-Fetch-Site` is the browser's own word and a page cannot set it, and
    * only `same-origin` is the board's own page: another port on this address
-   * is `same-site`, which is a different origin. `Origin`, where present, must
-   * be the board's own, and the `null` a sandboxed frame or a file sends is
-   * not. Every request also needs a private board credential: origin headers
-   * are a browser fence, never identity.
+   * is `same-site`, which is a different origin. An address typed or a
+   * bookmark opened is `none`, which a read may be and an act may not.
+   * `Origin`, where present, must be the board's own, and the `null` a
+   * sandboxed frame or a file sends is not. A request carrying neither is not
+   * a browser's, and the peer rule is what answers that one.
    */
   const fromAnotherPage = (request: Request, port: number): boolean => {
     const site = request.headers.get("sec-fetch-site");
@@ -440,6 +551,37 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     return url.protocol !== "http:" || !isOwn(url.host, port);
   };
 
+  /**
+   * Who asked, and whether that is this machine.
+   *
+   * WHY AN ACT FROM THIS MACHINE IS REFUSED. Every agent in this household
+   * runs in a box that shares this machine's network, so an agent that decided
+   * to restart a runner, or a page it wrote that somebody opened, reaches the
+   * board from one of this machine's own addresses. A person reaches it from
+   * another device on the tailnet. Nobody here is identified, so which machine
+   * asked is the one honest thing a request carries, and it is enough to keep
+   * the household's own agents on this box out of its controls. The address is
+   * the socket's peer: `X-Forwarded-For`, `Forwarded` and every other header
+   * are written by the asker and are never read for this.
+   *
+   * WHAT IT DOES NOT COVER, said plainly: an agent on ANOTHER machine of the
+   * household reaches this board from an address that is not this machine's,
+   * and this rule does not stop it. The tailnet is the boundary the owner chose.
+   *
+   * READS ARE LEFT ALONE, BUT FOR WHAT PEOPLE SAID. Every status page is a
+   * read of the store and the seam, an agent can already see its own
+   * household's state, and a rule that refused those reads would refuse this
+   * box its own status page. A chat and an artifact are not that state: the
+   * box hides every other person's state root, which is where their chatlogs
+   * and artifacts are, and a board that served them to this machine would hand
+   * one person's agent the conversations its box keeps from it. So the chats
+   * and the artifacts listener answer this machine the way an act does, with
+   * the 404, and a person reads them from another device on the tailnet.
+   */
+  const asked = options.peer ?? ((request: Request, server: PeerReader) => server.requestIP(request)?.address ?? null);
+  const fromThisMachine = (request: Request, server: PeerReader): boolean =>
+    isLocalAddress(asked(request, server));
+
   const answer = async (request: Request, server: PeerReader): Promise<Response> => {
     // THE HOST MUST BE THE BOARD'S OWN. A website that rebinds its own name to
     // this address reaches the socket with its own name in the header, and
@@ -449,34 +591,26 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     const url = new URL(request.url);
     const path = url.pathname;
     if (fromAnotherPage(request, port)) return missing();
-    const registry = loadRegistry(registryFile, { machine });
-    const auth = authenticateBoard(request, registry, entry);
-    if (!auth.configured) return boardSignIn(false);
-    if (!auth.viewer) return boardSignIn(true);
-    const viewer = auth.viewer;
     if (request.method === "GET") {
       const parts = path.split("/").filter((one) => one !== "");
-      if (viewer.role === "reader" && parts[0] !== "chats") {
-        return path === "/" ? new Response(null, { status: 303, headers: { location: "/chats" } }) : missing();
-      }
       const notice = noticeFrom(url.searchParams);
-      if (path === "/") return await machines(notice);
-      if (path === "/people") return await people(notice, viewer);
+      if (path === "/") return await overview(notice);
+      if (path === "/people") return await people(notice);
       if (path === "/findings") return await findingsOf(notice);
       if (path === "/metrics") return await metrics(notice);
       if (path === "/usage") return await usage(notice);
-      if (path === "/chats") return await chats(viewer);
-      if (parts.length === 3 && parts[0] === "chats") return await chat(parts, url.searchParams.get("before"), viewer);
+      if (parts[0] === "chats" && fromThisMachine(request, server)) return missing();
+      if (path === "/chats") return await chats();
+      if (parts.length === 3 && parts[0] === "chats") return await chat(parts, url.searchParams.get("before"));
+      if (parts.length === 2 && parts[0] === "fonts") return await font(parts[1]);
       return missing();
     }
     if (request.method === "POST") {
-      if (viewer.role !== "operator") return missing();
+      if (fromThisMachine(request, server)) return missing();
       const form = new URLSearchParams(await request.text());
       const target = form.get("target") ?? "";
-      const targetAgent = listAgents(registry).find(one => one.id === target);
-      if (targetAgent && targetAgent.person !== viewer.person) return missing();
       const value = form.get("value") === "true";
-      if (path === "/act/restart") return await restart(target, viewer);
+      if (path === "/act/restart") return await restart(target);
       if (path === "/act/enabled") {
         // The file refuses this field on the hub and on the board, so a form
         // somebody wrote by hand is answered here rather than by a writer that
@@ -502,11 +636,13 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    * refuses its script every page of the board and refuses its form every act,
    * whatever that page tries. It serves GET and nothing else, it has no page
    * and no act of its own, and a household that names no artifacts port serves
-   * no artifact at all.
+   * no artifact at all. Nothing on this machine is served one, for the reason
+   * the chats are not (see `fromThisMachine`).
    */
-  const artifactsAnswer = async (request: Request): Promise<Response> => {
+  const artifactsAnswer = async (request: Request, server: PeerReader): Promise<Response> => {
     if (!isOwn(request.headers.get("host"), artifactsPort)) return missing();
     if (request.method !== "GET") return missing();
+    if (fromThisMachine(request, server)) return missing();
     const path = new URL(request.url).pathname;
     if (!path.startsWith("/artifacts/")) return missing();
     return await artifact(path);
@@ -522,8 +658,8 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    *
    * Bun's own error page carries the message and the stack of whatever threw,
    * with this machine's absolute paths in it, and it is what a server hands out
-   * unless it is told otherwise. Even an authenticated reader gets no stack
-   * or absolute paths. The cause goes to the journal, where the person
+   * unless it is told otherwise. A reader here is not identified and gets no
+   * stack and no absolute path. The cause goes to the journal, where the person
    * who runs the box reads it.
    */
   const failed = (error: Error): Response => {
@@ -538,8 +674,8 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
     error: failed,
     async fetch(request, server) {
       const response = await answer(request, server);
-      response.headers.set("cache-control", "no-store");
-      response.headers.set("vary", "Authorization");
+      // Every page is a read of now and is never kept; a font says otherwise for itself.
+      if (!response.headers.has("cache-control")) response.headers.set("cache-control", "no-store");
       response.headers.set("referrer-policy", "no-referrer");
       response.headers.set("x-content-type-options", "nosniff");
       return response;

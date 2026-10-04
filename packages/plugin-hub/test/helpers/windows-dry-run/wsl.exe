@@ -1,0 +1,54 @@
+#!/bin/bash
+# A stand-in for Windows' wsl.exe, for a dry run of tools/windows/executor-setup.ps1 under pwsh on
+# Linux. It runs NOTHING it is handed: every Linux script is decoded and logged, and the few
+# answers the block reads back are canned. $FAKE_WSL_STATE holds the log and the files sent in;
+# $FAKE_WSL_PLAN is the plan JSON the spoke step answers with.
+set -u
+state=${FAKE_WSL_STATE:?}
+mkdir -p "$state/files"
+log() { printf '%s\n' "$*" >> "$state/calls.log"; }
+log "wsl.exe $*"
+case "${1:-}" in
+  --version) echo "WSL version: 2.6.1.0"; echo "Kernel version: 6.6.87.2-1"; exit 0 ;;
+  --list)
+    if [ "${2:-}" = "--verbose" ]; then
+      echo "  NAME            STATE           VERSION"
+      while read -r name; do echo "* $name    Running         2"; done < "$state/distros" 2>/dev/null
+    else
+      cat "$state/distros" 2>/dev/null
+    fi
+    exit 0 ;;
+  --install) echo "$4" >> "$state/distros"; exit 0 ;;
+  --terminate) exit 0 ;;
+  --distribution) ;;
+  *) echo "fake wsl.exe: unexpected $*" >&2; exit 64 ;;
+esac
+# --distribution D --user U --cd ~ --exec PROGRAM ARGS...
+user=$4
+shift 7
+if [ "$1" = /bin/sh ]; then
+  # Send-LinuxFile: bytes on stdin, the target path last.
+  target=${!#}
+  tr -d '\r\n' | base64 -d > "$state/files/$(echo "$target" | tr / _)"
+  log "file $target as $user"
+  exit 0
+fi
+if [ "$1" = /usr/bin/env ]; then log "env-exec as $user: ${*:2}"; exit 0; fi
+script=$(printf %s "${!#}" | base64 -d)
+n=$(ls "$state" | grep -c '^script-' || true)
+printf '%s\n' "$script" > "$state/script-$n-$user.sh"
+case "$script" in
+  *src/install/spoke.ts*) cat "${FAKE_WSL_PLAN:?}"; exit 0 ;;
+  *box-probe.ts*) echo "box: ok, api.anthropic.com resolves inside the hub's box (wsl=2; masks=/run/WSL,/mnt/wsl)" ;;
+  *gate_interop*) echo "gate_interop=off"; echo "gate_drives=none" ;;
+  *sha256sum*) echo "0123456789abcdef" ;;
+  *"test -s '"*credentials.json*) echo "yes" ;;
+  *"test -s"*) echo "no" ;;
+  */dev/tcp/*) echo "yes" ;;
+  *"imprnt hub registry"*) echo "registry desktop-oscsid6: current" ;;
+  *"imprnt hub check"*) echo "unit-missing: imprnt-hub-runner-desktop-oscsid6.service"; echo "exit=1" ;;
+  *"imprnt hub status"*) echo "runner-desktop-oscsid6 running running"; echo "exit=0" ;;
+  *report.json*) echo "PASS_SCOPED " ;;
+  *'echo "kernel='*) echo "kernel=6.6.87.2-microsoft-standard-WSL2"; echo "pid1=systemd"; echo "interop= none registered"; echo "windows_mounts=" ;;
+esac
+exit 0

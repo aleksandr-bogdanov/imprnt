@@ -11,6 +11,7 @@ import { openNeedsReview } from "./lib/resolve.ts";
 import { listPluginDirs, isEnabled, addPlugin, rmPlugin, specError, pluginScript } from "./lib/plugins.ts";
 import { installPlugin, purgePlugin, coreChannel, OFFICIAL } from "./lib/install.ts";
 import { addGlobalModule, rmGlobalModule, listGlobalModules, installedGlobalDirs } from "./lib/global.ts";
+import { commandsPath, linkCommand, unlinkCommand, listCommands, lookupCommand } from "./lib/commands.ts";
 import { projectRoot } from "./lib/roots.ts";
 import { collectNotes } from "./lib/moc.ts";
 import { registerVault, vaultProjectRoot, registeredRoot, configPath, isVaultProject, readDefaultAgent, setDefaultAgent, readSkipPermissions, setSkipPermissions, readDefaultModel, setDefaultModel } from "./lib/registry.ts";
@@ -135,6 +136,84 @@ function controlSlot(dst: string): Slot {
   }
   if (st.isFile()) return "keep";
   return "blocked-non-regular-file";
+}
+
+// Every word the switch below answers itself. A global command registered under one of these could
+// never run (a built-in always wins), so `plugin link` refuses the name up front.
+const BUILTINS = ["ingest", "recall", "snapshot", "check", "vault", "hot", "lair", "context", "agent", "yolo", "model", "plugin", "global", "init", "help"];
+
+// Single-quoted for display, so a printed rollback line with a spaced path pastes into a shell as is.
+// Display only: nothing here is ever executed.
+function shq(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`;
+}
+
+// Run a module script with the caller's args: stdio inherited, cwd unchanged, exit code passed through.
+function runModule(path: string): never {
+  const proc = spawnSync(process.execPath, [path, ...rest], { stdio: "inherit" });
+  if (proc.error) console.error(`imprnt: could not run ${path}: ${proc.error.message}`);
+  process.exit(proc.status ?? 1);
+}
+
+// `plugin link|unlink|list --global`: per-user command registrations (lib/commands.ts), so
+// `imprnt <name>` reaches a released package from any directory. Touches only commands.json: never
+// a vault, CLAUDE.local.md, the vault registry or anything under ~/.claude, and never the files the
+// registration points at. Returns the exit code.
+function pluginGlobal(sub: string, args: string[]): number {
+  let from: string | undefined;
+  let force = false;
+  let global = false;
+  const names: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--global") global = true;
+    else if (a === "--force" && sub === "link") force = true;
+    else if (a === "--from" && sub === "link") {
+      from = args[++i];
+      if (from === undefined) { console.error("usage: --from <dir> (missing directory after --from)"); return 1; }
+    } else if (a.startsWith("-")) { console.error(`plugin ${sub}: unknown flag ${a}`); return 1; }
+    else names.push(a);
+  }
+  if (!global) {
+    console.error(`plugin ${sub} needs --global: it registers a command for every directory (a project plugin is installed with \`imprnt plugin add\`)`);
+    return 1;
+  }
+  if (sub === "list") {
+    if (names.length) { console.error("usage: imprnt plugin list --global"); return 1; }
+    const l = listCommands();
+    if (!l.ok) { console.error(`plugin list --global: ${l.error}`); return 1; }
+    console.log(`global commands (${commandsPath()}):`);
+    if (!l.commands.length) console.log("  (none) - link one with `imprnt plugin link <name> --global --from <dir>`");
+    for (const c of l.commands) {
+      if (c.error) { console.log(`  ⚠ ${c.name}${c.dir ? ` → ${c.dir}` : ""}  (${c.error})`); continue; }
+      console.log(`  ${c.name} → ${c.dir}`);
+    }
+    console.log("\norder: a built-in subcommand, then these explicit registrations, then plugins/<name>/ of the selected project.");
+    return 0;
+  }
+  if (sub === "link") {
+    if (names.length !== 1 || from === undefined) { console.error("usage: imprnt plugin link <name> --global --from <dir> [--force]"); return 1; }
+    const name = names[0]!;
+    if (BUILTINS.includes(name)) { console.error(`plugin link ${name}: "${name}" is a built-in imprnt command, so a registration under that name would never run`); return 1; }
+    const r = linkCommand(name, resolvePath(from), { force });
+    if (!r.ok) { console.error(`plugin link ${name}: ${r.error}`); return 1; }
+    if (r.status === "already") console.log(`${name} already linked globally → ${r.path}`);
+    else {
+      console.log(`${r.status === "replaced" ? "relinked" : "linked"} ${name} globally → ${r.path} (${commandsPath()})`);
+      if (r.previous) console.log(`  previous: ${r.previous}\n  roll back: imprnt plugin link ${name} --global --from ${shq(r.previous)} --force`);
+      else console.log(`  undo: imprnt plugin unlink ${name} --global`);
+    }
+    console.log("  global registration overrides project modules; unlink it to restore project discovery");
+    return 0;
+  }
+  // unlink
+  if (names.length !== 1) { console.error("usage: imprnt plugin unlink <name> --global"); return 1; }
+  const name = names[0]!;
+  const r = unlinkCommand(name);
+  if (!r.ok) { console.error(`plugin unlink ${name}: ${r.error}`); return 1; }
+  if (!r.removed) console.log(`${name} was not linked globally`);
+  else console.log(`unlinked ${name} (was ${r.previous}; nothing there was deleted)\n  relink: imprnt plugin link ${name} --global --from ${shq(r.previous!)}`);
+  return 0;
 }
 
 // Delegated scripts parse process.argv.slice(2) themselves. Strip the subcommand token
@@ -280,11 +359,18 @@ switch (cmd) {
     // CLAUDE.local.md live there. `add <name>` fetches the package imprnt-plugin-<name> and copies
     // it into plugins/<name>/ before wiring; `add <name>/<file.md>` just wires a local file (the
     // _personal cast). No per-plugin logic in core.
+    const [sub, ...specs] = rest;
+    // The per-user command registrations target no project at all, so they branch off before one
+    // is picked (and before the targeting line below would name a vault they never touch).
+    if (sub === "link" || sub === "unlink" || (sub === "list" && specs.includes("--global"))) {
+      const code = pluginGlobal(sub, specs);
+      if (code) process.exit(code);
+      break;
+    }
     const proj = pluginRoot();
     // A project you stand in wins; otherwise plugin ops target your registered vault, so they work
     // from anywhere like `imp`. Say so when it is not cwd, so the target is never a surprise.
     if (proj !== process.cwd()) console.error(`(targeting vault project: ${proj})`);
-    const [sub, ...specs] = rest;
     if (sub === "list") {
       const dirs = listPluginDirs(proj);
       console.log("plugins:");
@@ -383,7 +469,7 @@ switch (cmd) {
       if (failed) process.exit(1);
       break;
     }
-    console.error("usage: imprnt plugin list | add <name> [--from <dir>] [--force] | rm <name> [--purge]");
+    console.error("usage: imprnt plugin list [--global] | add <name> [--from <dir>] [--force] | rm <name> [--purge] | link <name> --global --from <dir> [--force] | unlink <name> --global");
     process.exit(1);
   }
   case "global": {
@@ -614,13 +700,33 @@ switch (cmd) {
     // `node plugins/.../x.js`. Zero per-module knowledge: discovered
     // by filename, the same convention `check --all` uses to glob check.js or check.mjs. A built-in subcommand
     // always wins (this is the default arm, reached only when cmd matched no case above).
+    //
+    // Explicit global registrations are operator overrides, after built-ins and before project
+    // discovery (including IMPRNT_ROOT). An unavailable registration refuses: it never silently
+    // selects a different project copy. Unlinking restores the existing project discovery.
     if (cmd && !isHelp && !bare && !cmd.startsWith("-")) {
+      const reg = lookupCommand(cmd);
+      if (reg.kind === "ok") {
+        if (reg.shadowed) console.error(`imprnt: ${reg.path} wins over ${basename(reg.shadowed)} (both present)`);
+        runModule(reg.path);
+      }
+      if (reg.kind === "broken") {
+        console.error(`imprnt: "${cmd}" is linked globally${reg.dir ? ` to ${reg.dir}` : ""}, but ${reg.error}`);
+        console.error(`  point it at a released directory: imprnt plugin link ${cmd} --global --from <dir> --force`);
+        console.error(`  or drop the registration:        imprnt plugin unlink ${cmd} --global`);
+        process.exit(1);
+      }
+      if (reg.kind === "unreadable") {
+        console.error(`imprnt: global commands could not be read: ${reg.error} - fix or move it aside`);
+        process.exit(1);
+      }
+      // The name is joined into a path, so only a single segment is ever looked up.
+      const segment = !/[\\/]/.test(cmd) && !cmd.startsWith(".");
       // <module>.js, or <module>.mjs for a plugin shipping ESM. Both present runs the .js and says so.
-      const mod = pluginScript(join(pluginRoot(), "plugins", cmd), cmd);
+      const mod = segment ? pluginScript(join(pluginRoot(), "plugins", cmd), cmd) : null;
       if (mod) {
         if (mod.shadowed) console.error(`imprnt: plugins/${cmd}/${basename(mod.path)} wins over ${basename(mod.shadowed)} (both present)`);
-        const proc = spawnSync(process.execPath, [mod.path, ...rest], { stdio: "inherit" });
-        process.exit(proc.status ?? 1);
+        runModule(mod.path);
       }
     }
 
@@ -660,11 +766,14 @@ engine (same subcommands under \`imp\` or \`imprnt\`):
   imprnt plugin list                       show installed plugins (on/off) + official ones available to add
   imprnt plugin add <name> [--from D]      fetch imprnt-plugin-<name>, copy into plugins/, wire it (idempotent; --force refreshes)
   imprnt plugin rm <name> [--purge]        unwire a plugin; --purge also deletes plugins/<name>/
+  imprnt plugin link <name> --global --from D   make \`imprnt <name>\` run D/<name>.js or .mjs from any directory (per-user ~/.config/imprnt/commands.json, no vault touched; --force replaces)
+  imprnt plugin unlink <name> --global     drop that registration (D itself is never deleted)
+  imprnt plugin list --global              show global command registrations
   imprnt global add <name> [--from D]      enable a behavior module (e.g. anti-slop) in EVERY imp session (imp injects it; ~/.claude/CLAUDE.md is never touched); bare name promotes a project plugin
   imprnt global rm <name> [--purge]        disable a global module; --purge deletes the global copy
   imprnt global list                       show globally-enabled modules
   imprnt vault list|archive|restore        the vault as its own object — outlives any agent
-  imprnt <module> <command> [...]          run an installed module's command (e.g. \`imprnt kopeika sync\`) — no \`node\` paths
+  imprnt <module> <command> [...]          run a module's command (e.g. \`imprnt kopeika sync\`) — plugins/<module>/ of the project first, else a global link
 
 layout: entities (people · orgs · holdings) · domains (identity · health · finances · work · life · projects) · forms (events · mistakes)
 the vault is plain markdown. an agent greps it directly — no MCP, no DB.`);

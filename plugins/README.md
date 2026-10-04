@@ -238,7 +238,22 @@ naming a specific one:
   `plugins/<module>/<module>.js` or `<module>.mjs` by the same filename convention (`imprnt kopeika sync`),
   stdio inherited, exit code passed through. Zero per-module
   knowledge in core, and a built-in subcommand always wins. The core executes the plugin's own
-  command verbatim and never parses or interprets what it does.
+  command verbatim and never parses or interprets what it does. A module that should answer from
+  any directory, independent of which vault is selected (a released package kept outside every
+  vault), is registered per user instead of copied into a vault:
+  `imprnt plugin link <module> --global --from <dir>` checks that `<dir>` holds `<module>.js` or
+  `<module>.mjs` and records its canonical absolute path in
+  `$XDG_CONFIG_HOME/imprnt/commands.json` (`~/.config/imprnt/commands.json` by default), a file
+  of its own beside the vault registry. Nothing is copied or built: the directory must already
+  carry its dependencies. Lookup order is a built-in subcommand, then the explicit global registration, then
+  `plugins/<module>/` of the selected project (`IMPRNT_ROOT`, the project you stand in, else your
+  registered default vault), then the usage text. Registration deliberately overrides project discovery. A registration whose directory or entry went missing
+  is an error naming the fix, never a fall through to the usage text. Relinking the same directory
+  is a no-op; pointing a name elsewhere needs `--force` and prints the previous directory with the
+  command that restores it. `imprnt plugin unlink <module> --global` drops only the registration and
+  never deletes the directory and restores project discovery; `imprnt plugin list --global` shows
+  the registered release directories. This is unrelated to `imprnt global add`, which enables
+  behavior fragments for imp sessions.
 
 > **Not Kubernetes-style liveness/readiness.** Those exist to auto-restart live services and
 > route traffic — imprnt has no daemons and no orchestrator (rule 6), so "is it alive?" has

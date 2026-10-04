@@ -231,6 +231,8 @@ export async function runInstall(options: { registryFile: string; stage?: string
     // Councils: a runner of this build refuses to serve a store before step 14, so the box says so here, by the function
     // that writes a council's job, and not when the runner starts.
     await store.sql`select 'hub_council_job(text, text, text, text, jsonb)'::regprocedure`;
+    // Recorded health (step 22): the dismissal the door's delivery fence answers to.
+    await store.sql`select 'hub_outbox_dismiss(jsonb, text, text, text, text)'::regprocedure`;
     // The newest step grants rather than creates, so what is probed is the
     // grant itself: without it this hub applies a lifecycle control and cannot
     // say a word about it in the chat that asked.

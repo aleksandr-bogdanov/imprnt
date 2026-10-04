@@ -33,6 +33,7 @@ export const MIGRATION_FILES: readonly (readonly [number, string])[] = [
   [19, "019-fresh-context-recovery.sql"],
   [20, "020-return-movement.sql"],
   [21, "021-outbound.sql"],
+  [22, "022-recorded-health.sql"],
 ];
 
 const MIGRATIONS: Migration[] = MIGRATION_FILES.map(([version, file]) => ({
