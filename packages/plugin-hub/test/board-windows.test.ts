@@ -378,6 +378,7 @@ test(
       )) as Record<string, unknown>[];
 
       const findings = await runCheck({
+        disk: null,
         machine: HERE,
         registryFile: it.registryFile,
         store,

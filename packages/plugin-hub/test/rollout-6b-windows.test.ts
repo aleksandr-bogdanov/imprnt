@@ -641,7 +641,7 @@ test("ROLL-19 ROLL-27 ROLL-32 check against every new shape at once fires all fo
       sheets: JSON.stringify(await it.read.sql("select sheet, id, data, updated_at from state_row where sheet <> 'check' order by sheet, id")),
     })
     const before = await snapshot()
-    const findings = await runCheck({ machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null })
+    const findings = await runCheck({ disk: null, machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null })
     const after = await snapshot()
 
     const by = (kind: string) => findings.filter(one => one.kind === kind)

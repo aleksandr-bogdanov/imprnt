@@ -82,6 +82,7 @@ test("check reports the real council row and clears it when the council moves on
   try {
     store = await superStore(cluster, it.db);
     const check = async (now: Date) => ((await runCheck({
+      disk: null,
       machine: HERE, registryFile: it.registryFile, store: store!, os: null, kernel: null, credentials: fakeProber({}), now,
     })) as Finding[]).filter((one) => one.kind.startsWith("council-"));
     expect(await check(later(100))).toEqual([]);

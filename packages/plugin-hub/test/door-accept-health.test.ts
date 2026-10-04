@@ -39,7 +39,7 @@ for (const blocked of [true, false]) {
     const capture = spyOn(process.stderr, "write").mockImplementation(((chunk: any) => { stderr += String(chunk); return true }) as any)
     const store = await superStore(cluster, it.db)
     let door: Awaited<ReturnType<typeof runDoor>> | undefined
-    const check = () => runCheck({ machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null,
+    const check = () => runCheck({ disk: null, machine: "pi", registryFile: it.registryFile, store, os: null, kernel: null,
       credentials: { open: async () => ({ ok: true }), secrets: async () => [] } })
     const health = async () => (await it.read.sheet("door_health")).find(row => row.id === "door-fake/1000000001")
     const finding = async () => (await check()).find(row => JSON.stringify(row).includes("door-fake/1000000001"))

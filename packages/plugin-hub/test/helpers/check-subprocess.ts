@@ -61,6 +61,7 @@ try {
 
   let os: unknown = null;
   const findings = await runCheck({
+    disk: null,
     machine,
     registryFile,
     store,
