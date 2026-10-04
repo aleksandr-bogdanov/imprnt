@@ -216,6 +216,36 @@ test("the block closes interop and the drives, makes no database, refuses an ele
   expect(SCRIPT).toMatch(/\$InstallServices\s+= \$false/);
 });
 
+test("the block stops rather than reporting success: an open way around the box, a failed install or proof, a core without global links, and a box that resolves nothing", () => {
+  const scripts = shellScripts();
+  // The core is asked whether it can register a global command before the link, and the help line it
+  // is asked about is the core's own.
+  const tools = scripts.find(one => one.includes("plugin link hub --global"))!;
+  expect(tools.indexOf('*"plugin link <name> --global"*')).toBeGreaterThan(-1);
+  expect(tools.indexOf('*"plugin link <name> --global"*')).toBeLessThan(tools.indexOf("if ! linked=$(imprnt plugin link hub --global"));
+  expect(readFileSync(join(HUB, "../imprnt/scripts/cli.ts"), "utf8")).toContain("imprnt plugin link <name> --global --from D");
+  // Only the core's own "already linked" refusal is called another release; any other failure is said as itself.
+  expect(tools).toMatch(/\*"already linked to"\*\)\n\s+echo "another Hub release is registered/);
+  expect(SCRIPT).toContain("if ($r.Code -eq 9) { Stop-Setup \"imprnt $CoreVersion cannot register a global command");
+  // The hub's own box, masks and all, resolves a name before anything else is set up.
+  expect(SCRIPT).toContain("bun tools/windows/box-probe.ts api.anthropic.com");
+  expect(SCRIPT.indexOf("box-probe.ts")).toBeLessThan(SCRIPT.indexOf("# ---- step 4:"));
+  // Interop and the drives are read back before the proof and the units, and either open stops.
+  const gate = scripts.find(one => one.includes("gate_interop="))!;
+  expect(gate).toContain('[ "$(head -1 "$f")" = enabled ]');
+  expect(SCRIPT).toContain("$interopNow -ne 'off' -or $drivesNow -ne 'none'");
+  expect(SCRIPT.indexOf("gate_interop=")).toBeLessThan(SCRIPT.indexOf("step 7b"));
+  // A proof that did not pass, or an install that failed, stops before any logon task.
+  expect(SCRIPT).toContain("if (-not $proofPassed) { Stop-Setup");
+  const install = SCRIPT.indexOf("imprnt hub install $registry services");
+  const stopped = SCRIPT.indexOf("if ($r.Code -ne 0) { Stop-Setup \"imprnt hub install services failed", install);
+  expect(stopped).toBeGreaterThan(install);
+  expect(stopped).toBeLessThan(SCRIPT.indexOf("Register-ScheduledTask"));
+  // The preflight records a custom kernel, which the hub's WSL view must still recognise.
+  expect(SCRIPT).toContain("kernelCommandLine|kernel)");
+  expect(SCRIPT).toContain('elseif ($Attention.Count) { "completed, with findings to read first:');
+});
+
 test("the Windows CI job only runs when started by hand", () => {
   const job = readFileSync(join(HUB, "../../.github/workflows/windows-executor.yml"), "utf8");
   const on = job.match(/^on:\n((?: .*\n)+)/m)![1];

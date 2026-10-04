@@ -41,6 +41,8 @@ export interface WslSources {
   /** binfmt_misc entry name to its file's text. */
   binfmt: Record<string, string>;
   mounts: string;
+  /** Whether `/run/WSL`, the directory WSL's own init keeps, is there. */
+  runtime?: boolean;
 }
 
 /** WSL's own share of the Windows driver store: read-only system files, never a person's. */
@@ -71,6 +73,7 @@ function realSources(): WslSources {
     osrelease: readOr("/proc/sys/kernel/osrelease"),
     binfmt,
     mounts: readOr("/proc/self/mounts") ?? "",
+    runtime: existsSync("/run/WSL"),
   };
 }
 
@@ -90,13 +93,27 @@ function isWindowsMount(source: string, type: string, options: string): boolean 
   return /(^|[,;])aname=drvfs([,;]|$)/.test(options) || /^[A-Za-z]:/.test(source) || /^drvfs/i.test(source);
 }
 
-/** The view from supplied sources: null when this Linux is not a WSL guest at all. */
+/**
+ * The view from supplied sources: null when this Linux is not a WSL guest at all.
+ *
+ * NOT BY THE KERNEL'S NAME ALONE. A custom kernel named in `.wslconfig` calls
+ * itself whatever it was built as, and a guest the reader took for plain Linux
+ * gets no masks and no findings, silently. So WSL's own traces count as well:
+ * an interop registration (switched on or not), `/run/WSL`, and the mounts WSL
+ * makes for itself (`/mnt/wsl`, its driver share under `/usr/lib/wsl`). Only
+ * WSL 1 runs no kernel of its own, and it always names itself `Microsoft`, so a
+ * guest found by its traces alone is WSL 2.
+ */
 export function wslViewFrom(sources: WslSources): WslView | null {
   const release = sources.osrelease ?? "";
-  if (!/microsoft|wsl/i.test(release)) return null;
+  const named = /microsoft|wsl/i.test(release);
+  const points = sources.mounts.split("\n").map(line => unescapeMount(line.split(" ")[1] ?? ""));
+  const traced = Object.keys(sources.binfmt).length > 0 || sources.runtime === true ||
+    points.some(point => point === "/mnt/wsl" || point === DRIVER_SHARE || point.startsWith(`${DRIVER_SHARE}/`));
+  if (!named && !traced) return null;
   // WSL 2's kernel names itself `...-microsoft-standard-WSL2`; WSL 1 reports
   // the Windows build behind a `-Microsoft` suffix and nothing else.
-  const version = /wsl2|standard/i.test(release) ? 2 : 1;
+  const version = !named || /wsl2|standard/i.test(release) ? 2 : 1;
   const interop = Object.entries(sources.binfmt)
     .filter(([, text]) => text.split("\n")[0]?.trim() === "enabled")
     .map(([name]) => name)
@@ -120,21 +137,21 @@ export function readWslView(): WslView | null {
 
 /**
  * What the box empties on a WSL host: WSL's own runtime directories and every
- * Windows mount, each only where it exists.
+ * Windows mount, each only where it exists, ALWAYS, granted paths or not.
  *
- * A mask that would cover a path the launch grants (a person's tree kept on a
- * Windows drive, say) is left out, because covering it is a box the agent
- * cannot work in; `check` still reports the drive as mounted, and the
- * supported setup mounts none.
+ * A path the launch grants under one of these (a person's tree kept on a
+ * Windows drive, say) is bound back on its own after the masks, and nothing
+ * else of that drive is (`wslGrantedUnder`). A grant that IS a whole drive, or
+ * holds one, gets the empty mask: the box never hands an agent a whole Windows
+ * drive, and `check` still reports the drive as mounted; the supported setup
+ * mounts none.
  */
 export function wslMaskPaths(
   view: WslView | null,
-  granted: string[],
   exists: (path: string) => boolean = existsSync,
   resolve: (path: string) => string = realOr,
 ): string[] {
   if (view === null) return [];
-  const covers = (mask: string, path: string) => path === mask || path.startsWith(`${mask.replace(/\/+$/, "")}/`);
   // As the file system names it: WSLg's X socket directory is a link into its
   // own folder on some builds, and a tmpfs mounted through a link that an
   // earlier mask already emptied has nowhere to go. One that is covered by
@@ -142,9 +159,38 @@ export function wslMaskPaths(
   const masks = [...new Set([...WSL_RUNTIME_MASKS, ...view.windowsMounts]
     .filter(path => path !== "/" && exists(path))
     .map(resolve))];
-  return masks
-    .filter(mask => !masks.some(other => other !== mask && covers(other, mask)))
-    .filter(mask => !granted.some(path => path !== "" && covers(mask, path)));
+  return masks.filter(mask => !masks.some(other => other !== mask && covers(other, mask)));
+}
+
+/** Whether a path is a mask or anything under it. */
+function covers(mask: string, path: string): boolean {
+  return path === mask || path.startsWith(`${mask.replace(/\/+$/, "")}/`);
+}
+
+/** Whether a path lies strictly beneath one of the masks: a part of it, never the whole. */
+export function wslGrantedUnder(masks: string[], path: string): boolean {
+  const named = path.replace(/\/+$/, "");
+  return named !== "" && masks.some(mask => named !== mask.replace(/\/+$/, "") && covers(mask, named));
+}
+
+/**
+ * The name service's own file where a mask would empty it. WSL writes
+ * `/etc/resolv.conf` as a link to `/mnt/wsl/resolv.conf` by default, and a box
+ * that masks `/mnt/wsl` would then resolve no name at all: no model API, no
+ * turn. The one file is bound back read-only, and nothing else of the folder.
+ */
+export function wslKeptFiles(
+  masks: string[],
+  exists: (path: string) => boolean = existsSync,
+  resolve: (path: string) => string = realOr,
+): string[] {
+  const kept: string[] = [];
+  for (const file of ["/etc/resolv.conf"]) {
+    if (!exists(file)) continue;
+    const real = resolve(file);
+    if (wslGrantedUnder(masks, real) && !kept.includes(real)) kept.push(real);
+  }
+  return kept;
 }
 
 function realOr(path: string): string {

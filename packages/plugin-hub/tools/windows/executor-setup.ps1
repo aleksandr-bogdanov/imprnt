@@ -13,8 +13,9 @@
 #   4. copies your registry file in byte for byte and checks it describes this machine as a spoke
 #   5. asks you to paste the two store role passwords (never shown, never on a command line)
 #   6. logs the runner in, once, with a login of its own (it prints a URL you open on this PC)
-#   7. `imprnt hub check` against the household store; optionally one paid proof turn in a throwaway
-#      store; optionally this machine's units (runner + hub) and a logon task that keeps the distro up
+#   7. `imprnt hub check` against the household store, stopping if interop or a Windows drive is still
+#      open; optionally one paid proof turn in a throwaway store; optionally this machine's units
+#      (runner + hub) and a logon task that keeps the distro up, only after a proof that was asked for passed
 #   8. prints a summary to paste back. No secret is ever printed.
 # Nothing here copies, exports or refreshes any existing login, opens a listener, or touches the Pi.
 
@@ -45,6 +46,7 @@
   $OutputEncoding = New-Object System.Text.UTF8Encoding $false
   $Summary = [ordered]@{ setup = 'imprnt-windows-executor/1'; machine = $MachineId; distro = $Distro; started = (Get-Date).ToUniversalTime().ToString('s') + 'Z' }
   $Stopped = $null
+  $Attention = @()
 
   function Say([string]$Text) { Write-Host "[imprnt] $Text" -ForegroundColor Cyan }
   function Stop-Setup([string]$Why) { throw "IMPRNT-STOP: $Why" }
@@ -128,7 +130,7 @@
     if ($wv -lt [version]'2.4.4') { Stop-Setup "WSL $wv cannot name a new distro: run `wsl.exe --update` (2.4.4 or newer), then paste this block again" }
     $wslConfig = Join-Path $env:USERPROFILE '.wslconfig'
     if (Test-Path -LiteralPath $wslConfig) {
-      $modes = @(Select-String -LiteralPath $wslConfig -Pattern '^\s*(networkingMode|localhostForwarding|guiApplications|kernelCommandLine)\s*=' | ForEach-Object { $_.Line.Trim() })
+      $modes = @(Select-String -LiteralPath $wslConfig -Pattern '^\s*(networkingMode|localhostForwarding|guiApplications|kernelCommandLine|kernel)\s*=' | ForEach-Object { $_.Line.Trim() })
       Note 'wslconfig' ($(if ($modes.Count) { $modes -join '; ' } else { 'present, no networking keys' }))
     } else { Note 'wslconfig' 'absent (NAT networking, localhost forwarding on)' }
     $tailscale = Get-Service -Name 'Tailscale' -ErrorAction SilentlyContinue
@@ -249,17 +251,42 @@ fi
 [ -z "$(git -C "$release" status --porcelain --untracked-files=no)" ] || { echo "the release directory was edited"; exit 7; }
 [ -f "$release/packages/plugin-hub/src/install/spoke.ts" ] || { echo "__REF__ has no Windows executor support (src/install/spoke.ts)"; exit 7; }
 (cd "$release" && "$HOME/.bun/bin/bun" install --frozen-lockfile)
-if ! imprnt plugin link hub --global --from "$release/packages/plugin-hub"; then
-  echo "another Hub release is registered for imprnt hub. To replace it on purpose:"
-  echo "  imprnt plugin link hub --global --from $release/packages/plugin-hub --force"
-  exit 8
+# A core that cannot register a global command would fail the link below for that reason, not
+# because another release is registered. Asked of its own help text, never assumed.
+said=$(imprnt help 2>&1 || true)
+case "$said" in
+  *"plugin link <name> --global"*) ;;
+  *) echo "imprnt __CORE__ cannot register a global command (imprnt plugin link --global): name a published core release that can"; exit 9 ;;
+esac
+if ! linked=$(imprnt plugin link hub --global --from "$release/packages/plugin-hub" 2>&1); then
+  printf '%s\n' "$linked"
+  case "$linked" in
+    *"already linked to"*)
+      echo "another Hub release is registered for imprnt hub. To replace it on purpose:"
+      echo "  imprnt plugin link hub --global --from $release/packages/plugin-hub --force"
+      exit 8 ;;
+  esac
+  exit 10
 fi
+printf '%s\n' "$linked"
 '@
     $tools = $tools -replace '__BUN__', $BunVersion -replace '__CLAUDE__', $ClaudeVersion -replace '__CORE__', $CoreVersion -replace '__REF__', $HubRef -replace '__REPO__', $HubRepo
     $r = Invoke-Linux $LinuxUser $tools
+    if ($r.Code -eq 9) { Stop-Setup "imprnt $CoreVersion cannot register a global command (imprnt plugin link --global): a published core release that can is a prerequisite of this setup; set CoreVersion to one" }
+    if ($r.Code -eq 8) { Stop-Setup 'another Hub release is registered for imprnt hub; the lines above give the command that replaces it on purpose' }
+    if ($r.Code -eq 10) { Stop-Setup 'imprnt plugin link hub --global failed; the lines above say why' }
     if ($r.Code -ne 0) { Stop-Setup "the toolchain or the Hub release could not be installed (exit $($r.Code))" }
     $release = "/home/$LinuxUser/imprnt-hub-releases/$HubRef"
     $hubDir = "$release/packages/plugin-hub"
+
+    # ---- step 3d: the hub's own box, with this distro's WSL masks, resolves a name ----
+    # The bare bwrap box above has no masks. An agent's box empties WSL's shared folder, which is
+    # where WSL keeps the name server's file by default; a box that resolves nothing fails every turn.
+    Say "step 3d: the hub's own box, with this distro's WSL masks, resolves a name"
+    $r = Invoke-Linux $LinuxUser "cd $hubDir && bun tools/windows/box-probe.ts api.anthropic.com" -Capture
+    $r.Lines | ForEach-Object { Write-Host "  $_" }
+    Note 'box_probe' ($r.Lines -join ' ')
+    if ($r.Code -ne 0 -or (($r.Lines -join ' ') -notmatch '^box: ok')) { Stop-Setup "the hub's box on $Distro does not work as an agent needs it (exit $($r.Code)); the line above says why" }
 
     # ---- step 4: the registry, and what it asks of this machine ----
     Say 'step 4: the registry copy and the plan for this machine'
@@ -324,6 +351,21 @@ fi
     if (($r.Lines -join '') -ne 'yes') {
       Stop-Setup ($(if ($winReach) { 'Windows reaches the store and the distro does not: see "Networking" in docs/windows-executor.md' } else { 'Windows does not reach the store either: is Tailscale up on this PC, and is this PC on the tailnet the store admits?' }))
     }
+    # Interop and the Windows drives are ways around the box. /etc/wsl.conf closed both in step 3;
+    # if either is open now it did not take effect, and nothing runs an agent here until it does.
+    $gate = @'
+on=""; for f in /proc/sys/fs/binfmt_misc/WSLInterop*; do [ -e "$f" ] && [ "$(head -1 "$f")" = enabled ] && on="$on $(basename "$f")"; done
+drives=$(awk '$3=="drvfs"||(($3=="9p"||$3=="virtiofs")&&$4~/aname=drvfs/){print $2}' /proc/self/mounts | grep -v '^/usr/lib/wsl' | paste -sd, - || true)
+echo "gate_interop=${on:-off}"
+echo "gate_drives=${drives:-none}"
+'@
+    $r = Invoke-Linux $LinuxUser $gate -Capture
+    $interopNow = (@($r.Lines | Where-Object { $_ -like 'gate_interop=*' }) -join '').Replace('gate_interop=', '').Trim()
+    $drivesNow = (@($r.Lines | Where-Object { $_ -like 'gate_drives=*' }) -join '').Replace('gate_drives=', '').Trim()
+    Note 'gate' "interop=$interopNow drives=$drivesNow"
+    if ($r.Code -ne 0 -or $interopNow -ne 'off' -or $drivesNow -ne 'none') {
+      Stop-Setup "interop ($interopNow) or the Windows drives ($drivesNow) are open in $Distro, so /etc/wsl.conf did not take effect: run wsl.exe --terminate $Distro and paste this block again"
+    }
     $r = Invoke-Linux $LinuxUser "imprnt hub registry $registry $MachineId || true" -Capture
     Note 'registry_copy' ($r.Lines -join ' ')
     $r = Invoke-Linux $LinuxUser "c=0; imprnt hub check $registry $MachineId || c=`$?; echo exit=`$c" -Capture
@@ -355,13 +397,15 @@ node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
       $v = Invoke-Linux $LinuxUser $read -Capture
       Note 'proof' (($v.Lines -join ' ') + " (exit $($r.Code))")
       $proofPassed = (($v.Lines -join ' ') -match '^PASS_SCOPED')
+      if (-not $proofPassed) { Stop-Setup 'the proof turn did not pass (see proof above), so no unit was installed' }
     } else { Note 'proof' 'not run (RunProofTurn is false)' }
 
     # ---- step 7c: this machine's units, and the logon task that keeps the distro up ----
-    if ($InstallServices -and $proofPassed -ne $false) {
+    if ($InstallServices) {
       Say "step 7c: installing this machine's units through $($plan.hub)"
       $r = Invoke-Linux $LinuxUser "imprnt hub install $registry services $($plan.hub)"
       Note 'units_install' "exit $($r.Code)"
+      if ($r.Code -ne 0) { Stop-Setup "imprnt hub install services failed (exit $($r.Code)); no logon task was registered or started" }
       $task = 'imprnt-hub-keepalive'
       try {
         if (-not (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue)) {
@@ -378,8 +422,8 @@ node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
       Note 'status' ($r.Lines -join ' | ')
       $r = Invoke-Linux $LinuxUser "c=0; imprnt hub check $registry $MachineId || c=`$?; echo exit=`$c" -Capture
       Note 'check_after_units' ($r.Lines -join ' | ')
-    } elseif ($InstallServices) {
-      Note 'units_install' 'skipped: the proof turn did not pass'
+      if (@($r.Lines)[-1] -ne 'exit=0') { $Attention += 'check_after_units' }
+      if ("$($Summary['keepalive_task'])" -like 'failed*') { $Attention += 'keepalive_task' }
     } else { Note 'units_install' 'not asked (InstallServices is false)' }
   } catch {
     $message = $_.Exception.Message
@@ -412,7 +456,7 @@ echo "units=$(systemctl --user list-units 'imprnt-hub-*' --all --no-legend --pla
         foreach ($line in $r.Lines) { $at = $line.IndexOf('='); if ($at -gt 0) { Note ('linux_' + $line.Substring(0, $at)) $line.Substring($at + 1) } }
       }
     } catch { Note 'facts' "unreadable: $($_.Exception.Message)" }
-    Note 'result' ($(if ($Stopped) { "STOPPED: $Stopped" } else { 'completed' }))
+    Note 'result' ($(if ($Stopped) { "STOPPED: $Stopped" } elseif ($Attention.Count) { "completed, with findings to read first: $($Attention -join ', ')" } else { 'completed' }))
     Write-Host ''
     Write-Host '===== imprnt windows executor: paste everything from here to "end" back =====' -ForegroundColor Green
     foreach ($key in $Summary.Keys) { Write-Host ("{0}: {1}" -f $key, $Summary[$key]) }
