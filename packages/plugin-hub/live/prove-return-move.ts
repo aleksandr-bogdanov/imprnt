@@ -179,13 +179,15 @@ export async function runReturnProof(options: ReturnOptions, log: (line: string)
   const mac = { state: join(macScratch, "state"), tree: join(macScratch, "trees", ids.person), registry: join(macScratch, "registry", "registry.toml") };
   const piSide = { state: `${piScratch}/state`, tree: `${piScratch}/trees/${ids.person}`, registry: `${piScratch}/registry/registry.toml`, shim: `${piScratch}/bin`,
     runnerJournal: `${piScratch}/runner-pi.journal.jsonl`, hubJournal: `${piScratch}/hub-pi.journal.jsonl` };
-  for (const dir of [mac.state, join(mac.tree, "notes"), dirname(mac.registry)]) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // Each marker sits at the TOP of its tree and is gone before the move that leaves that tree: a move refuses to leave behind any entry of the
+  // person's tree that it neither carries nor verifies (`move-scope.ts`, `workspace_carriage_required`), an emptied `notes/` included (measured).
+  for (const dir of [mac.state, mac.tree, dirname(mac.registry)]) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const markerA = `ZEPHYR-${randomBytes(4).toString("hex").toUpperCase()}`;
   const markerB = `ZEPHYR-${randomBytes(4).toString("hex").toUpperCase()}`;
-  const fileA = join(mac.tree, "notes", `proof-a-${tag}.txt`);
-  const fileB = `${piSide.tree}/notes/proof-b-${tag}.txt`;
+  const fileA = join(mac.tree, `proof-a-${tag}.txt`);
+  const fileB = `${piSide.tree}/proof-b-${tag}.txt`;
   writeFileSync(fileA, `${markerA}\n`, { mode: 0o600 });
-  const madeTree = await remote(options.pi, `umask 077 && mkdir -p ${shq(piSide.state)} ${shq(`${piSide.tree}/notes`)} ${shq(dirname(piSide.registry))} ${shq(piSide.shim)} && ` +
+  const madeTree = await remote(options.pi, `umask 077 && mkdir -p ${shq(piSide.state)} ${shq(piSide.tree)} ${shq(dirname(piSide.registry))} ${shq(piSide.shim)} && ` +
     `ln -s ${shq(options.piBin)} ${shq(`${piSide.shim}/claude`)} && cat > ${shq(fileB)} && echo ok`, `${markerB}\n`);
   const sha = (text: string) => createHash("sha256").update(text).digest("hex");
   step("staged", { run: runDir, mac_scratch: macScratch, pi_scratch: piScratch, ids, marker_a_sha256: sha(markerA), marker_b_sha256: sha(markerB), pi_tree: madeTree.out.trim() === "ok" });
@@ -338,7 +340,7 @@ export async function runReturnProof(options: ReturnOptions, log: (line: string)
       if (row && Number(row.created) >= after - 5_000) {
         const stage = String(row.stage);
         if (seenStages.at(-1) !== stage) { seenStages.push(stage); step(`${label}_stage`, { stage }); }
-        const block = row.block === null ? null : String((row.block as Record<string, unknown>).code ?? "");
+        const block = row.block === null ? null : scrub(JSON.stringify(row.block), redactions);
         if (block !== null && blocks.at(-1) !== block) { blocks.push(block); step(`${label}_block`, { block }); }
         if (stage === "active" && row.dest_machine === to) break;
         if (stage === "withdrawn" || stage === "awaiting_owner") break;
