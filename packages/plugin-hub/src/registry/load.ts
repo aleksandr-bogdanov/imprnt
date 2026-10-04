@@ -49,6 +49,11 @@ const ROLLOUT_DEFAULTS: Record<string, number> = {
   "council.overrun_minutes": 30,
   "council.status_write_seconds": 5,
   "council.status_edit_seconds": 10,
+  // How little room the filesystems under this machine's state, secrets, trees and vaults may have left before `check`
+  // says so, crossing either one: mebibytes available to the hub's account, and percent of the filesystem. Chosen, not
+  // measured: 5 GiB and 10% leave a Pi's card time to be cleared by hand. Setting either to 1 all but silences that half.
+  "hub.disk_free_min_mb": 5120,
+  "hub.disk_free_min_percent": 10,
 };
 
 export const SETTING_FIELDS: SettingField[] = [
@@ -1087,6 +1092,9 @@ export function loadRegistry(file: string, view: RegistryView = {}): Registry {
     const value = valueAt(parsed, key);
     if (value !== undefined) positive(value, key);
   }
+  const diskPercent = valueAt(parsed, "hub.disk_free_min_percent");
+  if (typeof diskPercent === "number" && diskPercent > 100)
+    refuse("hub.disk_free_min_percent", 0, "hub.disk_free_min_percent must be a percentage, at most 100");
   const batch = valueAt(parsed, "hub.cutover_batch");
   if (batch !== undefined && (typeof batch !== "string" || !/^[A-Za-z0-9_-]+$/.test(batch)))
     refuse("hub.cutover_batch", 0, "hub.cutover_batch must be a nonempty batch ID");

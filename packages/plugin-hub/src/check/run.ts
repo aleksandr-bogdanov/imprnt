@@ -64,8 +64,11 @@ import { unattemptedReplyFindings } from "./delivery.ts";
 import { readUnexplainedWaits, unexplainedFindings, startingFindings } from "./waits.ts";
 import { readZoneState, zoneFindings } from "./zone.ts";
 import { backupFindings, readBackupState } from "./backup.ts";
+import { diskFindings, realDiskSeam, type DiskSeam } from "./disk.ts";
+import { recordedHealth, type Acknowledged } from "./resolutions.ts";
 
 export type { Finding } from "./finding.ts";
+export type { Acknowledged } from "./resolutions.ts";
 export { findingId } from "./finding.ts";
 
 /**
@@ -236,7 +239,18 @@ export async function runCheck(options: {
    * wait. A check shortens the wait so a hanging CLI costs seconds, not tens.
    */
   loopProbe?: LoopProbeOptions;
+  /**
+   * How the room left on this machine's filesystems is read, in the same style as `credentials`: absent is the real
+   * box, so every caller is told about a filling disk without handing anything, and null reads nothing at all.
+   */
+  disk?: DiskSeam | null;
   now?: Date;
+  /**
+   * Where the operator's own records are handed back (`./resolutions.ts`): a
+   * finding resolved on its exact evidence, and dismissed notices. They are not
+   * findings, and a caller that does not ask is not told of them.
+   */
+  acknowledged?: Acknowledged[];
 }): Promise<Finding[]> {
   const machine = options.machine;
   const now = options.now ?? new Date();
@@ -807,6 +821,34 @@ export async function runCheck(options: {
     );
   }
 
+  // --- the room left on the filesystems this machine writes the household onto
+  //
+  //     Its own state and secrets directories, and the trees and vaults of the
+  //     people whose agents run here, which is the `mine` set again, so a spoke
+  //     never reads a path that is only the hub machine's. One reading per
+  //     filesystem, the counters alone: nothing is walked and nothing is freed.
+  const disk = options.disk === undefined ? realDiskSeam() : options.disk;
+  if (disk !== null) {
+    const here = new Set(mine.map((agent) => agent.person));
+    const secrets = readSetting(registry, "hub.secrets_dir");
+    findings.push(
+      ...diskFindings({
+        paths: [
+          String(readSetting(registry, "hub.state_dir") ?? ""),
+          secrets === undefined || secrets === null ? "" : String(secrets),
+          ...listPeople(registry)
+            .filter((person) => here.has(person.id))
+            .flatMap((person) => [person.tree, person.vault ?? ""]),
+        ],
+        seam: disk,
+        minMb: setting(registry, "hub.disk_free_min_mb", 5120),
+        minPercent: setting(registry, "hub.disk_free_min_percent", 10),
+        machine,
+        registryFile: options.registryFile,
+      }),
+    );
+  }
+
   // --- the household's shared zone: whether each checkout this machine syncs
   //     is there, whether it really pulls from the zone's remote, and whether
   //     the vault declares the mount (criterion 1).
@@ -1065,6 +1107,12 @@ export async function runCheck(options: {
       says: findingLine("en", { code: row.failure?.code ?? "delivery-failed", target, cause: row.failure?.cause ?? "operation failed" }),
       fix: `imprnt hub recover <registry> door:${door}` });
   }
+  // --- what an operator recorded, honoured only on the exact evidence it names --
+  const recorded = await recordedHealth({ store: options.store, findings, machine,
+    doors: new Set(entries.filter(entry => entry.kind === "door").map(entry => entry.id)),
+    doorOf: agent => listAgents(registry).find(one => one.id === agent)?.door });
+  findings.splice(0, findings.length, ...recorded.standing);
+  options.acknowledged?.push(...recorded.acknowledged);
   const standing = new Set(findings.map((finding) => finding.id));
   for (const finding of findings) {
     await putRow(options.store, CHECK_SHEET, finding.id, { ...finding });

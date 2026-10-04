@@ -820,7 +820,7 @@ export async function runDoor(options: {
         const fenced = outbound ? await outboundNoticeFence(store,chunk.id) : null;
         if(outbound && !fenced) continue;
         try {
-          if (!chunk.route) await store.sql`update outbox set route = ${route}::jsonb where id = ${chunk.id} and route is null`;
+          if (!chunk.route) await store.sql`update outbox set route = ${route}::jsonb where id = ${chunk.id} and route is null and delivery_state = 'pending'`;
           if (!projected.has(chunk.id)) {
             await appendChatLineOnce({ stateDir, person: chunk.person, agent: fenced?.sourceAgent ?? chunk.agent }, {
               id: `outbox:${chunk.id}`, at: new Date(chunk.written_at).toISOString(), direction: "out",
@@ -849,7 +849,10 @@ export async function runDoor(options: {
           const maxAttempts = Number(readSetting(fresh, "door.delivery_max_attempts"));
           if (Number(chunk.attempts) >= maxAttempts) {
             const failure = chunk.failure ?? { kind: "uncertain" as const, code: "send-interrupted", cause: "delivery outcome unknown" };
-            await store.sql`update outbox set delivery_state = 'failed', retry_at = null, failure = ${failure}::jsonb where id = ${chunk.id}`;
+            const [failed] = await store.sql`update outbox set delivery_state = 'failed', retry_at = null, failure = ${failure}::jsonb
+              where id = ${chunk.id} and delivery_state = 'pending' and delivered_at is null returning id`;
+            // Dismissed by an operator since this pass read it: not this door's to fail or announce.
+            if (!failed) { blocked.add(group); continue; }
             projected.delete(chunk.id);
             await recordOperationFailure(store, "post", options.door, route.chat, failure);
             await routeNotice(store, { registry: fresh, door: options.door, platform: options.platform.name,
@@ -860,8 +863,14 @@ export async function runDoor(options: {
           // If this process dies during the send, restart retains an honest
           // unknown receipt and the same bounded retry deadline.
           const next = new Date(Date.now() + seconds * 1000).toISOString();
-          await store.sql`update outbox set attempts = ${attempts}, retry_at = ${next}::timestamptz,
-            failure = '{"kind":"uncertain","code":"send-interrupted","cause":"delivery outcome unknown"}'::jsonb where id = ${chunk.id}`;
+          // THE STAMP IS THE SEND'S CLAIM ON THE ROW. An operator's dismissal locks the
+          // row and requires a pending part with no attempt: one that committed first
+          // leaves nothing pending here and nothing is sent, and one that comes after
+          // finds this attempt and is refused (`hub_outbox_dismiss`).
+          const [claimed] = await store.sql`update outbox set attempts = ${attempts}, retry_at = ${next}::timestamptz,
+            failure = '{"kind":"uncertain","code":"send-interrupted","cause":"delivery outcome unknown"}'::jsonb
+            where id = ${chunk.id} and delivery_state = 'pending' and delivered_at is null returning id`;
+          if (!claimed) { blocked.add(group); continue; }
           try {
             // Stable across retries and process restarts. Discord enforces this only within
             // its recent-message window; it is not an unlimited exactly-once guarantee.

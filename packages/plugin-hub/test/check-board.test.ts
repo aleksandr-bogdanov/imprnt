@@ -30,12 +30,13 @@ import { seam, startCluster, statementWatch, type Cluster } from "./helpers/clus
 import { stageHub, superStore } from "./helpers/hub-fixture.ts";
 import type { RunSpec } from "./helpers/registry.ts";
 import type { Finding } from "./helpers/finding.ts";
-import { loadRegistry, RegistryRefused } from "../src/registry/load.ts";
+import { loadRegistry, readSetting, RegistryRefused } from "../src/registry/load.ts";
 import { systemd } from "../src/os/systemd.ts";
 import { launchd } from "../src/os/launchd.ts";
 import { unitName } from "../src/os/names.ts";
 import { resetCommand, stopCommand } from "../src/os/diff.ts";
 import type { OsSeam, UnitState } from "../src/os/types.ts";
+import type { DiskSeam, DiskStat } from "../src/check/disk.ts";
 
 const SLOW = 120_000;
 const MACHINE = process.platform === "darwin" ? "mac" : "pi";
@@ -198,9 +199,9 @@ const unloadedFix = (id: string) =>
     ? `launchctl bootstrap gui/${UID} "$HOME/Library/LaunchAgents/${unitName(id)}.plist"`
     : kickstartFix(id);
 
-async function stage(run: RunSpec[]) {
+async function stage(run: RunSpec[], hub: Record<string, number> = {}) {
   return await stageHub(cluster, {
-    hub: { tick_seconds: 1 },
+    hub: { tick_seconds: 1, ...hub },
     machines: [
       { id: MACHINE, os: MACHINE_OS },
       { id: MACHINE === "mac" ? "pi" : "mac", os: MACHINE === "mac" ? "linux" : "macos" },
@@ -530,6 +531,9 @@ test(
           os: os.os,
           kernel: null,
           credentials: CREDENTIALS,
+          // Each stage's state directory is its own, so a real disk reading on a full box would earn one disk-low finding
+          // per stage under two different paths. The room left is not what this control compares; the run below does.
+          disk: null,
           now,
         });
       };
@@ -553,6 +557,88 @@ test(
       await b.close();
       await withOne.stop();
       await without.stop();
+    }
+  },
+  SLOW,
+);
+
+test(
+  "the room left reaches a whole run through its seam: a low filesystem is one disk-low row judged on the file's own floor, a healthy one leaves no row, and null reads nothing",
+  async () => {
+    // The file lowers the byte floor to 1024 MiB, so a reading of 2 GiB is healthy only if the run reads the file's
+    // setting and not the 5120 MiB default.
+    const it = await stage([DOOR, RUNNER, HUB], { disk_free_min_mb: 1024 });
+    const store = await superStore(cluster, it.db);
+    // Every path on one planted filesystem, whose counters this test writes, because the suite's own box has whatever
+    // room it has.
+    const GIB = 1024n * 1024n * 1024n;
+    const reading = (available: bigint): DiskStat => ({ bsize: 4096n, blocks: (10n * GIB) / 4096n, bavail: available / 4096n });
+    let stat = reading(GIB / 2n);
+    const asked: string[] = [];
+    const statted: string[] = [];
+    const disk: DiskSeam = {
+      device(path) {
+        asked.push(path);
+        return "planted";
+      },
+      statfs(path) {
+        statted.push(path);
+        return stat;
+      },
+    };
+    try {
+      const { runCheck, CHECK_SHEET } = await seam("src/check/run.ts");
+      const check = runCheck as Check;
+      const ask = async (seamed: DiskSeam | null) =>
+        await check({
+          machine: MACHINE,
+          registryFile: it.registryFile,
+          store,
+          os: null,
+          kernel: null,
+          credentials: CREDENTIALS,
+          disk: seamed,
+          now: new Date(),
+        });
+      const about = (found: Finding[]) => found.filter((one) => one.kind.startsWith("disk-"));
+      const rows = async () =>
+        (await it.read.sheet(CHECK_SHEET as string)).map((row) => row.id).filter((id) => id.includes("/disk-"));
+      // The state directory as the run reads it, so a loader that normalises the path is not a failure here.
+      const stateDir = String(readSetting(loadRegistry(it.registryFile, { machine: MACHINE }), "hub.state_dir"));
+      const id = `${MACHINE}/disk-low:${stateDir}`;
+
+      // 1. Half a GiB of ten: under the file's 1024 MiB and under the default 10%. One finding, reported by the state
+      //    directory, read once for the one filesystem, and written to the sheet.
+      let found = about(await ask(disk));
+      expect(asked).toContain(stateDir);
+      expect(statted).toEqual([stateDir]);
+      expect(found.map((one) => one.id)).toEqual([id]);
+      expect(found[0].kind).toBe("disk-low");
+      expect(found[0].subject).toBe(stateDir);
+      expect(found[0].machine).toBe(MACHINE);
+      expect(found[0].says).toContain("1024 MiB and 10%");
+      expect(found[0].fix).toContain(it.registryFile);
+      expect(await rows()).toEqual([id]);
+
+      // 2. Two GiB of ten: low against the 5120 MiB default, healthy against the file's 1024. Nothing is said and the
+      //    row is gone rather than marked fixed.
+      stat = reading(2n * GIB);
+      found = about(await ask(disk));
+      expect(statted.length).toBe(2);
+      expect(found).toEqual([]);
+      expect(await rows()).toEqual([]);
+
+      // 3. Null reads nothing at all, even with the low reading planted again.
+      stat = reading(GIB / 2n);
+      const before = asked.length;
+      found = about(await ask(null));
+      expect(asked.length).toBe(before);
+      expect(statted.length).toBe(2);
+      expect(found).toEqual([]);
+      expect(await rows()).toEqual([]);
+    } finally {
+      await store.close();
+      await it.stop();
     }
   },
   SLOW,

@@ -5,7 +5,7 @@ import { storeMachineOf } from "../hub/digest.ts";
 import { overrideRegistryCopy, standingOf } from "../hub/distribute.ts";
 import { openStore } from "../store/connect.ts";
 import { storeUrlFor } from "../store/secrets.ts";
-import { runCheck } from "../check/run.ts";
+import { runCheck, type Acknowledged } from "../check/run.ts";
 import { readKernelView } from "../check/kernel.ts";
 import { thisOs } from "../os/index.ts";
 import { readStatus } from "../hub/status.ts";
@@ -15,10 +15,13 @@ import { requestRecovery } from "../hub/control.ts";
 import { readStampMetrics, renderMetrics } from "../metrics/stamps.ts";
 import { checkClean, cliUsage, operation, registryCopy, safeValue, status } from "../door/lines.ts";
 import { restoreCommand } from "./restore.ts";
+import { healthCommand } from "./health.ts";
 
 export async function command(args: string[]): Promise<number> {
   // `restore` has flags of its own and is read by its own parser (`entry/restore.ts`): it is the barrier a restore runs before serving.
   if (args[0] === "restore") return await restoreCommand(args.slice(1));
+  // `health` too: its records name exact evidence by flag (`entry/health.ts`).
+  if (args[0] === "health") return await healthCommand(args.slice(1));
   const [verb, registryFile, target, extra, ...rest] = args;
   const usage = () => { process.stderr.write(cliUsage("en") + "\n"); return 2; };
   if (!registryFile || !["check", "status", "metrics", "install", "recover", "relayout", "registry"].includes(verb) || rest.length) return usage();
@@ -67,8 +70,11 @@ export async function command(args: string[]): Promise<number> {
     try {
       if (verb === "metrics") process.stdout.write(renderMetrics(await readStampMetrics(store)) + "\n");
       if (verb === "check") {
-        const findings = await runCheck({ registryFile, machine: machine!, store, os: thisOs(), kernel: await readKernelView() });
+        const acknowledged: Acknowledged[] = [];
+        const findings = await runCheck({ registryFile, machine: machine!, store, os: thisOs(), kernel: await readKernelView(), acknowledged });
         process.stdout.write((findings.length ? findings.map(f => f.says).join("\n") : checkClean("en")) + "\n");
+        // What an operator recorded is said after the findings, and never counts as one.
+        if (acknowledged.length) process.stdout.write(acknowledged.map(one => one.says).join("\n") + "\n");
         return findings.length ? 1 : 0;
       }
       if (verb === "recover") {
