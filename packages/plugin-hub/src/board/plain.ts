@@ -103,8 +103,8 @@ export function requestCause(value: unknown): string {
 
 /**
  * What a blocked agent's `agent_health` cause means, as words. The codes are
- * the closed list the runner writes with `status: "blocked"`; the row's own
- * remedy is printed beneath, so these say only what is wrong.
+ * the closed list the runner writes with `status: "blocked"`; what happens
+ * next is printed beneath (`agentNext`), so these say only what is wrong.
  */
 const AGENT_CAUSE: Record<string, string> = {
   "configured-engine-unavailable": "the engine it is set to use is not available on its runner",
@@ -115,6 +115,26 @@ const AGENT_CAUSE: Record<string, string> = {
 export function agentCause(value: unknown): string {
   const plain = plainCause(value);
   return AGENT_CAUSE[plain] ?? AGENT_CAUSE[String(value ?? "").trim()] ?? plain;
+}
+
+/**
+ * What happens next for a blocked agent, in one short sentence per closed
+ * cause. The runner's remedy is written for an engineer and runs to several
+ * sentences, so the first screen says this instead and the people page keeps
+ * the remedy whole.
+ */
+const AGENT_NEXT: Record<string, string> = {
+  "configured-engine-unavailable": "its messages stay queued; restarting will not fix it, the engine has to be set up on that machine.",
+  "conversation.engine-mismatch": "set its preset back to the engine its conversation started on; restarting will not change it.",
+};
+
+/** A blocked agent's next step as words: the closed causes said short, anything else as its remedy's first sentence. */
+export function agentNext(cause: unknown, remedy: unknown): string | null {
+  const known = AGENT_NEXT[plainCause(cause)] ?? AGENT_NEXT[String(cause ?? "").trim()];
+  if (known !== undefined) return known;
+  if (remedy === undefined || remedy === null) return null;
+  const first = plainLine(remedy).split(/(?<=[.!?])\s+/, 1)[0];
+  return first === "" ? null : first;
 }
 
 /**

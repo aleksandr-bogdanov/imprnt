@@ -10,7 +10,7 @@ import type { ChatNewest, ChatPage } from "./chats.ts";
 import { defaultTools, type RemoteFact } from "./fleet.ts";
 import { cell, escape, NOTHING, page, rawCell, table, whole, wordsCell } from "./html.ts";
 import { renderChatText } from "./markup.ts";
-import { agentCause, fillCommand, findingGist, kindGist, mib, plainCause, plainLine, requestCause, type CommandPlaces, type FilledCommand } from "./plain.ts";
+import { agentCause, agentNext, fillCommand, findingGist, kindGist, mib, plainCause, plainLine, requestCause, type CommandPlaces, type FilledCommand } from "./plain.ts";
 import type { PlacedTurn, TurnState, TurnSummary } from "./turns.ts";
 import type { UsageRow, WindowLine } from "./usage.ts";
 
@@ -477,6 +477,8 @@ export interface ChatLine {
   says: string;
   /** Why, in the store's or the finding's own closed words, or null. */
   why: string | null;
+  /** The record's whole words where `why` shortens them, for the people page only. */
+  detail?: string;
 }
 
 /** Whether a rank is something a person has to look at. */
@@ -529,8 +531,10 @@ export function chatLine(args: {
     return line(0, chatUnreachable("en"), plainCause(args.doorHealth.cause ?? args.doorHealth.code ?? "failed") || "failed");
   }
   if (args.agentHealth?.status === "blocked") {
-    const remedy = args.agentHealth.remedy === undefined ? null : plainLine(args.agentHealth.remedy);
-    return line(0, chatStuck("en", { why: agentCause(args.agentHealth.cause) || "blocked" }), remedy);
+    const remedy = args.agentHealth.remedy === undefined ? "" : plainLine(args.agentHealth.remedy);
+    const next = agentNext(args.agentHealth.cause, args.agentHealth.remedy);
+    const said = line(0, chatStuck("en", { why: agentCause(args.agentHealth.cause) || "blocked" }), next);
+    return remedy === "" || remedy === next ? said : { ...said, detail: remedy };
   }
   if (counts.stale > 0) return line(0, chatStuck("en", { why: reason(oldest.stale) ?? "" }), counts.stale > 1 ? cardStale("en", { count: counts.stale }) : null);
   if (counts.held > 0) return line(1, cardHeld("en", { count: counts.held }), reason(oldest.held));
@@ -732,7 +736,7 @@ export function peoplePage(args: {
         return [
           cell(agent.id, "id"),
           cell(said.says, "word"),
-          cell(said.why),
+          cell(said.detail ?? said.why),
           cell(open),
           cell(turns?.since ? shortWhen(turns.since, now) : null, "when"),
           cell(`${life.mode}, ${life.sleeping ? "paused" : "awake"}`),

@@ -296,6 +296,8 @@ const STYLE = [
   "  td.acts { white-space: nowrap; }",
   // An id and a time are read whole: never broken at a hyphen inside them.
   "  td.id, td.when { white-space: nowrap; }",
+  // A long why beside it never squeezes a state into a narrow column.
+  "  td.word { min-width: min(22rem, 30vw); }",
   // A fix cell holds a copy box that may break anywhere, so a table would
   // squeeze it to nothing; it keeps room for a command to read in a few lines.
   "  td.fix { min-width: min(26rem, 45vw); width: 40%; }",

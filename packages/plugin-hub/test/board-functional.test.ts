@@ -449,8 +449,19 @@ test("the first screen says held, busy, waiting and healthy as four different th
   // Recorded failures: a blocked agent, a door that cannot reach the chat, a retry.
   expect(chatLine({ agent: agent("x"), findings: [], agentHealth: { status: "blocked", cause: "configured-engine-unavailable" }, sleeping: false, now }).says)
     .toBe("stuck: the engine it is set to use is not available on its runner");
-  expect(chatLine({ agent: agent("x"), findings: [], agentHealth: { status: "blocked", cause: "conversation.engine-mismatch", remedy: "Restore this agent's preset." }, sleeping: false, now }))
-    .toMatchObject({ rank: 0, says: "stuck: its conversation was started on another engine than the one it is set to use", why: "Restore this agent's preset." });
+  // A blocked agent's why is one short next step, never the runner's remedy
+  // paragraph; the remedy is kept whole as the detail the people page shows.
+  const mismatch = "Master conversation is bound to claude-code, but its preset configures opencode. Restore this agent's preset to claude-code; restarting or fresh_context does not change its engine. Independent jobs and harvests can still run.";
+  expect(chatLine({ agent: agent("x"), findings: [], agentHealth: { status: "blocked", cause: "conversation.engine-mismatch", remedy: mismatch }, sleeping: false, now }))
+    .toEqual({ agent: agent("x"), rank: 0, says: "stuck: its conversation was started on another engine than the one it is set to use",
+      why: "set its preset back to the engine its conversation started on; restarting will not change it.", detail: mismatch });
+  expect(chatLine({ agent: agent("x"), findings: [], agentHealth: { status: "blocked", cause: "configured-engine-unavailable", remedy: "Engine X needs a runtime. Provision one first." }, sleeping: false, now }).why)
+    .toBe("its messages stay queued; restarting will not fix it, the engine has to be set up on that machine.");
+  // A cause outside the closed list says its remedy's first sentence; a one-sentence remedy is not repeated as detail.
+  expect(chatLine({ agent: agent("x"), findings: [], agentHealth: { status: "blocked", cause: "something-new", remedy: "Ask the owner. Then wait for the runner to retry." }, sleeping: false, now }))
+    .toMatchObject({ why: "Ask the owner.", detail: "Ask the owner. Then wait for the runner to retry." });
+  expect(chatLine({ agent: agent("x"), findings: [], agentHealth: { status: "blocked", cause: "something-new", remedy: "Ask the owner." }, sleeping: false, now }))
+    .not.toHaveProperty("detail");
   expect(chatLine({ agent: agent("x"), findings: [], doorHealth: { status: "failed", cause: 'PostgresError: relation "x" does not exist' }, sleeping: false, now }))
     .toMatchObject({ rank: 0, says: "stuck: the door cannot reach this chat", why: "operation failed" });
   expect(chatLine({ agent: agent("x"), findings: [], agentHealth: { status: "retry", cause: "model overloaded", retry_at: "2026-10-04T12:05:00.000Z" }, sleeping: false, now }))
@@ -470,6 +481,19 @@ test("the first screen says held, busy, waiting and healthy as four different th
   expect(order).toEqual(["stuck", "held", "busy", "queued", "fine"]);
   expect(page).toContain('<details class="machine">');
   expect(page).not.toMatch(/\bowed\b|: OK\b/);
+
+  // The first screen says the short next step; the people page keeps the
+  // runner's whole remedy, and its state column keeps room beside it.
+  const blocked = [{ id: "stuck", data: { status: "blocked", cause: "conversation.engine-mismatch", remedy: mismatch } }];
+  const first = overviewPage({
+    machine: "pi", entries: [], machines: [{ id: "pi", os: "linux" }] as MachineEntry[], status: [], findings: [], peaks: [], remote: {}, acts: [],
+    people: [{ id: "p1" } as never], agents: [agent("stuck")], turns: {}, agentHealth: blocked, doorHealth: [], lifetimes: {}, now,
+  });
+  expect(first).toContain("set its preset back to the engine its conversation started on; restarting will not change it.");
+  expect(first).not.toContain("Master conversation is bound");
+  const people = peoplePage({ people: [{ id: "p1" } as never], agents: [agent("stuck")], turns: {}, agentHealth: blocked, doorHealth: [], lifetimes: {}, findings: [], now });
+  expect(people).toContain(`data-label="why">${mismatch.replace(/'/g, "&#39;")}</td>`);
+  expect(people).toContain("td.word { min-width: min(22rem, 30vw); }");
 });
 
 test("one agent's rows are counted per state with the oldest of each, and the card never calls a queue answering", () => {
