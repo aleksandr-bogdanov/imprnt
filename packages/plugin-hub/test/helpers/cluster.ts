@@ -14,7 +14,7 @@
 
 import { SQL } from "bun";
 import { mkdtemp, rm, readFile, appendFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join, dirname } from "node:path";
 
@@ -48,10 +48,16 @@ let leaveWired = false;
 /** A stop that works in an `exit` handler, where nothing may be awaited. */
 function stopNow(dataDir: string): void {
   try {
-    Bun.spawnSync([pgBin("pg_ctl"), "-D", dataDir, "-m", "immediate", "-w", "-t", "10", "stop"], {
+    const stopped = Bun.spawnSync([pgBin("pg_ctl"), "-D", dataDir, "-m", "immediate", "-w", "-t", "10", "stop"], {
       stdout: "ignore",
       stderr: "ignore",
     });
+    // Synchronous exit handlers cannot await rm; remove only this process's
+    // scratch cluster after shutdown, never a directory with a live postmaster.
+    if (stopped.exitCode === 0 || !existsSync(join(dataDir, "postmaster.pid"))) {
+      rmSync(dirname(dataDir), { recursive: true, force: true });
+      started.delete(dataDir);
+    }
   } catch {
     // A cluster that is already gone is the outcome this wanted.
   }
@@ -66,7 +72,6 @@ function wireLeaving(): void {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => {
       for (const dataDir of started) stopNow(dataDir);
-      started.clear();
       // The default disposition, restored: a handler that swallowed the signal
       // would turn an interrupted run into a hung one.
       //
@@ -413,7 +418,10 @@ export async function startCluster(options: StartOptions = {}): Promise<Cluster>
           // a client may already be closed or broken, that is fine on teardown
         }
       }
-      await run(pgBin("pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "stop"]);
+      const stopped = await run(pgBin("pg_ctl"), ["-D", dataDir, "-m", "immediate", "-w", "-t", "10", "stop"]);
+      if (stopped.code !== 0 && existsSync(join(dataDir, "postmaster.pid"))) {
+        throw new Error("test-cluster-stop-failed: preserving data directory");
+      }
       started.delete(dataDir);
       await rm(root, { recursive: true, force: true });
     },
