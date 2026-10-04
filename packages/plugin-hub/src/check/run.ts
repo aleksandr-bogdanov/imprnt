@@ -1,6 +1,5 @@
 import { outboundFindings } from "./outbound.ts";
 import { checkLoopSource } from "../adapters/index.ts";
-import { OPENCODE_ISOLATION_REFUSAL, OPENCODE_ISOLATION_REMEDY } from "../adapters/opencode.ts";
 import { CODEX_BUILD } from "../adapters/codex-config.ts";
 import type { LoopProbeOptions, LoopProbeTimeout } from "../adapters/launch.ts";
 import { acceptRepair, finding as findingLine, syncRepair, unitNotStopped } from "../door/lines.ts";
@@ -951,12 +950,6 @@ export async function runCheck(options: {
       try { await checkLoopSource(registry, preset, options.loopProbe); }
       catch (error) {
         const message = (error as Error)?.message ?? "";
-        if (message === OPENCODE_ISOLATION_REFUSAL) {
-          const kind = "configured-engine-unavailable";
-          findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,
-            says: `${preset}: OpenCode activation is blocked (${message}).`, fix: OPENCODE_ISOLATION_REMEDY });
-          continue;
-        }
         if (/^codex-(build-unvalidated|binary-missing|version-unavailable)(:|$)/.test(message)) {
           const kind = "codex-runtime-unavailable";
           findings.push({ id: findingId(machine, kind, preset), kind, subject: preset, machine,

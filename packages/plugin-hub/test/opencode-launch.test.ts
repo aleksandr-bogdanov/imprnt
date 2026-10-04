@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ADAPTERS, adapterFor, checkLoopSource, loopLaunch } from "../src/adapters/index.ts"
-import { VALIDATED, createOpenCode, openCode, OPENCODE_ISOLATION_REFUSAL } from "../src/adapters/opencode.ts"
+import { VALIDATED, createOpenCode, openCode } from "../src/adapters/opencode.ts"
 import { OPENCODE_CONFIG_ENV, OPENCODE_KEY_ENV } from "../src/adapters/opencode-config.ts"
 import { makeOpenCodeLaunch, probeOpenCodeVersion, readModelKey } from "../src/adapters/opencode-launch.ts"
 import { makeLoopLaunch } from "../src/adapters/launch.ts"
@@ -212,8 +212,8 @@ test("the adapter is registered beside Claude's, has no native session port, and
   const probe = { bin: f.bin }
   expect(probeOpenCodeVersion(f.bin)).toBe("9.9.9")
   // A build nobody measured (the stand-in's 9.9.9): an ordinary launch is refused by name and version, a restricted one is not.
-  await expect(loopLaunch(f.input(), probe)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
-  await expect(loopLaunch(fixture("harvest").input(), { bin: f.bin })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  await expect(loopLaunch(f.input(), probe)).rejects.toThrow("native-tool-control-unvalidated: opencode 9.9.9")
+  expect(await loopLaunch(fixture("harvest").input(), { bin: f.bin })).toMatchObject({ credentialId: "provider-key" })
   // Once a build is named as read back, the same launch is made.
   const measured = createOpenCode({ validated: { ...VALIDATED, delegationControl: ["9.9.9"] } })
   const made = await measured.prepareLaunch!(f.input(), probe) as any
@@ -273,7 +273,7 @@ test("the pinned 1.18.34 is the build that was measured: its session store and r
   expect(VALIDATED.safeResume).toEqual([])
 })
 
-test("the production source check refuses unsafe activation before key or binary access", async () => {
+test("the production source check validates the selected credential and binary", async () => {
   const f = fixture()
   const registry = loadRegistry(writeRegistry(f.dir, {
     hub: { state_dir: join(f.dir, "state") },
@@ -281,23 +281,25 @@ test("the production source check refuses unsafe activation before key or binary
     credentials: [{ id: "provider-key", kind: "model-key", file: f.keyFile, owner: "p1" }],
     presets: { "opencode-daily": { ...PRESET, credential: "provider-key" } },
   }))
-  await expect(checkLoopSource(registry, "opencode-daily", { bin: f.bin })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
-  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "no-such-binary") })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  await checkLoopSource(registry, "opencode-daily", { bin: f.bin })
+  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "no-such-binary") })).rejects.toThrow("opencode-binary-missing")
   writeFileSync(join(f.dir, "bin", "broken"), "#!/bin/sh\nexit 3\n", { mode: 0o755 })
-  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "bin", "broken") })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
+  await expect(checkLoopSource(registry, "opencode-daily", { bin: join(f.dir, "bin", "broken") })).rejects.toThrow("opencode-binary-unusable")
 })
 
 
-test("production OpenCode entry points refuse before reading launch data and preserve configured tools", async () => {
-  const input = new Proxy({}, { get() { throw new Error("unsafe-launch-data-read"); } }) as any
-  await expect(openCode.capabilities!(input)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
-  await expect(openCode.prepareLaunch!(input)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
-  await expect(openCode.start(input)).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
-  for (const purpose of ["ordinary", "harvest", "triage"]) {
-    const f = fixture(purpose), tools = [...f.agent.tools as string[]]
-    rmSync(f.keyFile)
-    await expect(loopLaunch(f.input(), { bin: join(f.dir, "missing-binary") })).rejects.toThrow(OPENCODE_ISOLATION_REFUSAL)
-    expect(f.agent.tools).toEqual(tools)
-    expect(existsSync(f.sessionDir)).toBe(false)
-  }
+test("production routing prepares a pinned build without weakening other credential masks", async () => {
+  const f = fixture()
+  writeFileSync(f.bin, '#!/bin/sh\necho "opencode 1.18.34"\n', { mode: 0o755 })
+  const other = join(f.dir, "other-secrets", "other.token")
+  mkdirSync(join(f.dir, "other-secrets"))
+  writeFileSync(other, "unrelated-synthetic-secret")
+  const input = f.input()
+  input.box.secretPaths = [other]
+  const launch = await loopLaunch(input, { bin: f.bin }) as any
+  expect(openCode.activationBlock).toBeUndefined()
+  expect(launch.env[OPENCODE_KEY_ENV]).toBe(f.key)
+  const direct = makeOpenCodeLaunch(input, f.bin)
+  expect(launch.wrap(["/bin/true"])).toEqual(direct.wrap(["/bin/true"]))
+  expect(written(launch.cwd)).not.toContain("unrelated-synthetic-secret")
 })

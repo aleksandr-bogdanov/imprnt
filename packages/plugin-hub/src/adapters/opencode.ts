@@ -440,8 +440,7 @@ async function open(options: Parameters<Adapter["start"]>[0], settings: { startT
   };
 }
 
-/** Low-level protocol harness retained for disposable synthetic proofs only.
- * Production registry routing uses the fail-closed openCode adapter below. */
+/** Construct the boxed OpenCode adapter with measured runtime capabilities. */
 export function createOpenCode(options: OpenCodeOptions = {}): Adapter {
   const validated = options.validated ?? VALIDATED;
   const startTimeoutMs = options.startTimeoutMs ?? 30_000;
@@ -482,16 +481,6 @@ export function createOpenCode(options: OpenCodeOptions = {}): Adapter {
   };
 }
 
-/** Both raw provider credentials and control API authentication are exposed to
- * tools in pinned1.18.34. No supported cross-platform isolation is established.
- * Never fall back to the diagnostic protocol harness for a configured agent. */
-export const OPENCODE_ISOLATION_REFUSAL = "opencode-credential-control-isolation-unavailable";
-export const OPENCODE_ISOLATION_REMEDY = "OpenCode is unavailable until provider credentials and its control API are isolated from tools on this machine. Keep affected work queued and provision a validated isolation-capable runtime before retrying; rotating the key or restarting cannot resolve this. Existing conversations keep their engine and recovery holds.";
-const refuseActivation = async (): Promise<never> => { throw new Error(OPENCODE_ISOLATION_REFUSAL); };
-export const openCode: Adapter = {
-  name: "opencode",
-  activationBlock: { cause: OPENCODE_ISOLATION_REFUSAL, remedy: OPENCODE_ISOLATION_REMEDY },
-  capabilities: refuseActivation,
-  prepareLaunch: refuseActivation,
-  start: refuseActivation,
-};
+/** The engine and its tools share authority over this conversation's own credential.
+ * Other credentials remain masked by the launch box. */
+export const openCode = createOpenCode();
