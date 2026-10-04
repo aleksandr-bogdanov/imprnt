@@ -396,6 +396,25 @@ test("an original input whose hold the owner's recovery choice released is left 
   }
 });
 
+test("a retry an operator resolved on its evidence is not said as retrying, from the health row or a sheet written before it", () => {
+  const now = new Date("2026-10-04T12:00:00.000Z");
+  const agent = { id: "a1", person: "p1", chat: "c1", door: "d1", runner: "runner-a", preset: "daily" } as AgentEntry;
+  const retry = { status: "retry", cause: "Error: Connection closed", retry_at: "2026-10-04T11:00:30.000Z" };
+  const stale: CheckRow = { id: "f", kind: "agent-retry", subject: "a1", machine: "pi", says: "agent-retry: a1: Connection closed.", fix: "", updated_at: now.toISOString() };
+  // Unresolved, it is retrying, from the row alone or from the finding.
+  expect(chatLine({ agent, findings: [], agentHealth: retry, sleeping: false, now }).rank).toBe(2);
+  expect(chatLine({ agent, findings: [stale], agentHealth: retry, sleeping: false, now }).rank).toBe(0);
+  // Resolved: what the chat is doing now, with the resolution as its why.
+  const resolved = { ...retry, resolved: true };
+  for (const findings of [[], [stale]]) {
+    expect(chatLine({ agent, findings, agentHealth: resolved, sleeping: false, now })).toMatchObject({ rank: 5, says: chatHealthy("en"), why: "retry resolved by an operator" });
+  }
+  expect(chatLine({ agent, findings: [], agentHealth: resolved, sleeping: true, now })).toMatchObject({ rank: 4, why: "retry resolved by an operator" });
+  // Another finding about the same agent still stands.
+  const other: CheckRow = { ...stale, id: "g", kind: "unit-missing", says: "unit-missing: a1." };
+  expect(chatLine({ agent, findings: [stale, other], agentHealth: resolved, sleeping: false, now }).rank).toBe(0);
+});
+
 test("the first screen says held, busy, waiting and healthy as four different things, problems first", () => {
   const now = new Date("2026-10-04T12:00:00.000Z");
   const agent = (id: string, extra: Partial<AgentEntry> = {}) =>

@@ -23,6 +23,7 @@ import { lifetimeFor, listAgents, listMachines, listPeople, listRunEntries, voic
 import { loadRegistry, NEVER_STOPPED, readSetting, type Registry, type RunEntry } from "../registry/load.ts";
 import type { OsSeam } from "../os/types.ts";
 import type { StoreLike } from "../store/connect.ts";
+import { markResolvedRetries } from "../store/health.ts";
 import { readVoiceHealth } from "../voice/health.ts";
 import { isLocalAddress, sameAddress } from "../net/address.ts";
 import { serveArtifact } from "./artifacts.ts";
@@ -54,9 +55,9 @@ import { readUsage, readWindows } from "./usage.ts";
  * its own names; it asks nobody to sign in and reads no credential, an account
  * verifier left on disk by an earlier build included. What stays in front of
  * every request is the fence a browser needs: the Host must be the board's own,
- * a request another page sent is refused, no page can be framed, and an act
- * whose peer is this machine is refused, because every agent on this box shares
- * its network.
+ * a request another page sent is refused, no page can be framed, and an act,
+ * a chat or an artifact whose peer is this machine is refused, because every
+ * agent on this box shares its network.
  *
  * THE BOARD HOLDS NO STATE OF ITS OWN. It opens no file for writing anywhere,
  * samples nothing and keeps no index. Every page is a read of the one store,
@@ -273,7 +274,8 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       agents,
       lifetimes,
       turns: await readTurnStates(store, agents.map((agent) => agent.id)),
-      agentHealth: await sheet("agent_health"),
+      // A retry an operator resolved is marked, so the line agrees with `check`.
+      agentHealth: await markResolvedRetries(store, await sheet("agent_health")),
       doorHealth: await sheet("door_health"),
     };
   };
@@ -566,9 +568,15 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    * household reaches this board from an address that is not this machine's,
    * and this rule does not stop it. The tailnet is the boundary the owner chose.
    *
-   * READS ARE LEFT ALONE. Every page is a read of the store and the seam, an
-   * agent can already see its own household's state, and a rule that refused
-   * reads would refuse this box its own status page.
+   * READS ARE LEFT ALONE, BUT FOR WHAT PEOPLE SAID. Every status page is a
+   * read of the store and the seam, an agent can already see its own
+   * household's state, and a rule that refused those reads would refuse this
+   * box its own status page. A chat and an artifact are not that state: the
+   * box hides every other person's state root, which is where their chatlogs
+   * and artifacts are, and a board that served them to this machine would hand
+   * one person's agent the conversations its box keeps from it. So the chats
+   * and the artifacts listener answer this machine the way an act does, with
+   * the 404, and a person reads them from another device on the tailnet.
    */
   const asked = options.peer ?? ((request: Request, server: PeerReader) => server.requestIP(request)?.address ?? null);
   const fromThisMachine = (request: Request, server: PeerReader): boolean =>
@@ -591,6 +599,7 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
       if (path === "/findings") return await findingsOf(notice);
       if (path === "/metrics") return await metrics(notice);
       if (path === "/usage") return await usage(notice);
+      if (parts[0] === "chats" && fromThisMachine(request, server)) return missing();
       if (path === "/chats") return await chats();
       if (parts.length === 3 && parts[0] === "chats") return await chat(parts, url.searchParams.get("before"));
       if (parts.length === 2 && parts[0] === "fonts") return await font(parts[1]);
@@ -627,11 +636,13 @@ export async function runBoard(options: BoardOptions): Promise<BoardHandle> {
    * refuses its script every page of the board and refuses its form every act,
    * whatever that page tries. It serves GET and nothing else, it has no page
    * and no act of its own, and a household that names no artifacts port serves
-   * no artifact at all.
+   * no artifact at all. Nothing on this machine is served one, for the reason
+   * the chats are not (see `fromThisMachine`).
    */
-  const artifactsAnswer = async (request: Request): Promise<Response> => {
+  const artifactsAnswer = async (request: Request, server: PeerReader): Promise<Response> => {
     if (!isOwn(request.headers.get("host"), artifactsPort)) return missing();
     if (request.method !== "GET") return missing();
+    if (fromThisMachine(request, server)) return missing();
     const path = new URL(request.url).pathname;
     if (!path.startsWith("/artifacts/")) return missing();
     return await artifact(path);

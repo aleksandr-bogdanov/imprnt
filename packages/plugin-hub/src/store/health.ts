@@ -105,3 +105,21 @@ export async function standingResolution(store: StoreLike, kind: "retry" | "stam
     { at: Date | string; detail: Record<string, unknown> }[];
   return row ? { at: new Date(row.at), detail: row.detail } : null;
 }
+
+/**
+ * Health rows, with a retry an operator resolved ON THIS EXACT EVIDENCE marked
+ * `resolved: true`. The resolution leaves the row as the runner wrote it, by
+ * design, and `check` stops reporting it; a reader that went by the row alone
+ * would go on saying "retrying" beside a clean `check`. The match is the one
+ * `check` makes, by the fingerprint the store computes now, so a new failure
+ * is a new row and is not marked. A store without the step marks nothing.
+ */
+export async function markResolvedRetries<Row extends { id: string; data: Record<string, unknown> }>(store: StoreLike, rows: Row[]): Promise<Row[]> {
+  if (!rows.some(row => row.data.status === "retry") || !(await recordedHealthReady(store))) return rows;
+  const out: Row[] = [];
+  for (const row of rows) {
+    const resolved = row.data.status === "retry" && (await standingResolution(store, "retry", row.id)) !== null;
+    out.push(resolved ? { ...row, data: { ...row.data, resolved: true } } : row);
+  }
+  return out;
+}

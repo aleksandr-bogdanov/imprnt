@@ -12,7 +12,7 @@ import { rolloutDatabase } from "./helpers/rollout-fixtures.ts"
 import { MIGRATION_FILES, migrate } from "../src/store/migrate.ts"
 import { markDelivered, readPendingChunks } from "../src/store/outbox.ts"
 import { putRow } from "../src/records/statesheet.ts"
-import { dismissNotices, previewDismissal, previewRetry, previewStamp, resolveRetry, resolveStamp } from "../src/store/health.ts"
+import { dismissNotices, markResolvedRetries, previewDismissal, previewRetry, previewStamp, resolveRetry, resolveStamp } from "../src/store/health.ts"
 import { recordedHealth } from "../src/check/resolutions.ts"
 import { healthCommand } from "../src/entry/health.ts"
 import type { Finding } from "../src/check/finding.ts"
@@ -327,10 +327,14 @@ test("H4 an agent's retry recorded by an earlier runner process is resolved on i
   expect(said.standing.map(one => one.id)).toEqual(["pi/agent-retry:p1-other", "pi/unit-missing:door-fake"])
   expect(said.acknowledged).toMatchObject([{ kind: "agent-retry", subject: AGENT }])
   expect(said.acknowledged[0].says).toContain(REASON)
+  // The board reads the same row as the hub's role and marks it on the same evidence, so it does not say "retrying" beside a clean check.
+  const sheetRows = async () => (await s.hub.sql`select id, data from state_row where sheet = 'agent_health' order by id`) as unknown as { id: string; data: Record<string, unknown> }[]
+  expect((await markResolvedRetries(s.hub, await sheetRows())).find(row => row.id === AGENT)?.data).toMatchObject({ status: "retry", resolved: true })
 
   // A new failure is the runner rewriting its row: new evidence, a finding again, and recorded by the process now running.
   await putRow(s.runner, "agent_health", AGENT, { status: "retry", cause: "Error: child-exited", retry_at: new Date(Date.now() + 30_000).toISOString() })
   expect((await consult(s.hub, [finding("agent-retry", AGENT)])).standing).toHaveLength(1)
+  expect((await markResolvedRetries(s.hub, await sheetRows())).find(row => row.id === AGENT)?.data.resolved).toBeUndefined()
   expect(await verdict()).toBe("recorded-by-current-incarnation")
   // The runner's own success clears its row: there is nothing to resolve, and nothing is recorded.
   await s.runner.sql`delete from state_row where sheet = 'agent_health' and id = ${AGENT}`

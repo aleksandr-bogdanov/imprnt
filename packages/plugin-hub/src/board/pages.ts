@@ -501,7 +501,10 @@ export function chatLine(args: {
 }): ChatLine {
   const { agent, now } = args;
   const about = agent.door === undefined ? [agent.id] : [agent.id, agent.door, `${agent.door}/${agent.chat}`];
-  const found = args.findings.find((finding) => about.includes(finding.subject));
+  // A sheet `check` wrote before an operator resolved the retry still holds its
+  // finding until `check` runs again; the resolution on this evidence answers it.
+  const resolvedRetry = args.agentHealth?.status === "retry" && args.agentHealth.resolved === true;
+  const found = args.findings.find((finding) => about.includes(finding.subject) && !(resolvedRetry && finding.kind === "agent-retry"));
   const counts = args.turns?.counts ?? { answering: 0, queued: 0, held: 0, stale: 0 };
   const oldest = args.turns?.oldest ?? {};
   const reason = (one: PlacedTurn | undefined) =>
@@ -538,7 +541,10 @@ export function chatLine(args: {
   }
   if (counts.stale > 0) return line(0, chatStuck("en", { why: reason(oldest.stale) ?? "" }), counts.stale > 1 ? cardStale("en", { count: counts.stale }) : null);
   if (counts.held > 0) return line(1, cardHeld("en", { count: counts.held }), reason(oldest.held));
-  if (args.agentHealth?.status === "retry") {
+  // A retry an operator resolved on this exact evidence is history, as `check`
+  // says: the line is what the chat is doing now, with the resolution as its why
+  // where nothing else is said.
+  if (args.agentHealth?.status === "retry" && !resolvedRetry) {
     return line(2, chatRetrying("en", { cause: plainCause(args.agentHealth.cause) || "failed" }), retryAt(args.agentHealth));
   }
   if (counts.answering > 0) {
@@ -546,8 +552,9 @@ export function chatLine(args: {
     return line(3, chatBusy("en", { kind: busy.kind, at: shortWhen(busy.at, now) }), counts.queued > 0 ? cardQueued("en", { count: counts.queued }) : null);
   }
   if (counts.queued > 0) return line(3, cardQueued("en", { count: counts.queued }), reason(oldest.queued));
-  if (args.sleeping) return line(4, chatPaused("en"));
-  return line(5, chatHealthy("en"));
+  const note = resolvedRetry ? "retry resolved by an operator" : null;
+  if (args.sleeping) return line(4, chatPaused("en"), note);
+  return line(5, chatHealthy("en"), note);
 }
 
 /**

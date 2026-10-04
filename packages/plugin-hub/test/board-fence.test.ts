@@ -348,7 +348,7 @@ test(
 );
 
 test(
-  "nobody signs in: every peer reads every page, and only an act whose peer is another device is taken",
+  "nobody signs in: every peer reads every status page, and only another device reads a chat or has an act taken",
   async () => {
     // "production" is the server's own reader, which answers this machine for
     // a check in this runtime; null is a peer nothing could place.
@@ -356,12 +356,20 @@ test(
       const s = await stage(peer);
       try {
         const host = `127.0.0.1:${s.board.port}`;
-        for (const path of ["/", "/people", "/chats", "/chats/p1/p1-lair", "/chats/p2/p2-lair", "/usage", "/findings", "/metrics"]) {
+        for (const path of ["/", "/people", "/usage", "/findings", "/metrics"]) {
           const answer = await s.board.get(path);
           expect(answer.status, `${path} for ${String(peer)}`).toBe(200);
           expect(answer.headers.get("www-authenticate"), path).toBeNull();
           // A credential somebody still sends is a header nothing reads.
           expect((await s.board.get(path, { headers: { authorization: "Basic dGVzdDp0ZXN0" } })).status).toBe(200);
+        }
+        // What people said: an agent on this machine is boxed away from every
+        // other person's chatlog, and the board does not hand it back.
+        for (const path of ["/chats", "/chats/p1/p1-lair", "/chats/p2/p2-lair"]) {
+          const answer = await s.board.get(path);
+          expect(answer.status, `${path} for ${String(peer)}`).toBe(acts ? 200 : 404);
+          expect(answer.headers.get("www-authenticate"), path).toBeNull();
+          if (!acts) expect((await answer.text()).trim(), path).toBe(pageMissing("en"));
         }
         const pressed = await raw(s.board.port, "POST", "/act/restart",
           { host, origin: `http://${host}`, "sec-fetch-site": "same-origin" }, `target=${RUNNER_ENTRY.id}`);
