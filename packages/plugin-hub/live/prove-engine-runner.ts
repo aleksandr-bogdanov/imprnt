@@ -341,15 +341,17 @@ export function judge(facts: ProofFacts): { verdict: Verdict; failures: string[]
 
 export function promptsFor(markerPath: string): [string, string, string] {
   return [
-    // The secrecy is THIS reply's only: a model told never to write the word refuses the recalls too (measured, Codex + MiniMax).
-    // And the read is spelled out as a required step: told only "use your tool", a model may answer DONE without one (measured, MiniMax).
-    `Step 1: call your file-reading tool now on the file ${markerPath}. Its content cannot be guessed, so you must actually read it. ` +
-      "Step 2: remember the single code word it holds; I will ask for it in a later message of this same conversation. " +
-      "In this reply only, do not write, quote, spell or hint at the code word. After reading, reply with exactly one word: DONE",
-    "Это продолжение нашего разговора. Не открывай никаких файлов и не используй никакие инструменты. Теперь напиши кодовое слово из " +
-      "файла, который ты прочитал по моей первой просьбе в этом разговоре: сейчас его уже можно писать. Ответь одним коротким предложением по-русски, в котором есть это слово.",
-    "Снова без файлов и без инструментов: напиши то же кодовое слово ещё раз, его можно писать. Ответь одним коротким предложением " +
-      "по-русски, в котором есть это слово.",
+    // Measured on MiniMax (Codex and OpenCode): a "code word" never to be written makes the model refuse the recalls as confidential,
+    // and "use your tool" alone lets it answer DONE unread. So this is an openly non-secret memory test, the read is a required step,
+    // and only THIS reply is asked to leave the label out.
+    `This is a memory test of our conversation; nothing in it is secret. Step 1: call your file-reading tool now on the file ${markerPath}. ` +
+      "Its content cannot be guessed, so you must actually read it. Step 2: remember the test label it holds; I will ask for it in a later " +
+      "message of this same conversation. For the test, leave the label out of this reply only. After reading, reply with exactly one word: DONE",
+    "Это продолжение нашей проверки памяти, метка не секретная. Не открывай никаких файлов и не используй никакие инструменты. Напиши " +
+      "тестовую метку из файла, который ты прочитал по моей первой просьбе в этом разговоре. Ответь одним коротким предложением по-русски, " +
+      "в котором есть эта метка.",
+    "Снова без файлов и без инструментов: напиши ту же тестовую метку ещё раз. Ответь одним коротким предложением по-русски, в котором " +
+      "есть эта метка.",
   ];
 }
 
