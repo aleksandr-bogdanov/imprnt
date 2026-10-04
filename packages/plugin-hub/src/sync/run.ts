@@ -44,7 +44,7 @@ async function git(path: string, args: string[], code: string, stage: Stage,
   const [out, err, status] = await Promise.all([
     options.discard ? drain(child.stdout, DIAGNOSTIC_BYTES) : new Response(child.stdout).text(),
     drain(child.stderr, DIAGNOSTIC_BYTES), child.exited]);
-  if (status !== 0 || child.signalCode) throw new GitFailure(code, diagnose(stage, status, child.signalCode, out, err));
+  if (status !== 0 || child.signalCode) throw new GitFailure(code, diagnoseGitFailure(stage, status, child.signalCode, out, err));
   return options.raw ? out : out.trim();
 }
 
@@ -73,7 +73,7 @@ type Stage = "toplevel" | "common-dir" | "config" | "branch" | "remote" | "git-d
  * language, since the sync does not force one on git.
  */
 type Reason = "index-lock" | "pathspec-missing" | "nothing-to-commit" | "permission" | "no-space"
-  | "signal" | "spawn" | "internal" | "unknown";
+  | "remote-advanced" | "signal" | "spawn" | "internal" | "unknown";
 
 type RemotePhase = "remote-list" | "fetch-urls" | "push-urls" | "writable-roots" | "local-fetch" | "local-push";
 const EXCEPTION_TYPES = ["Error", "TypeError", "RangeError", "URIError", "SyntaxError", "ReferenceError", "EvalError", "AggregateError", "DOMException"] as const;
@@ -103,6 +103,8 @@ const ERRNOS = new Set(["ENOENT", "EACCES", "EPERM", "ENOMEM", "EMFILE", "ENFILE
 // git's usual wording, canned in tests and not observed on a failing sync.
 // Anything else is `unknown`, never a guess.
 const SHAPES: { reason: Reason; stage?: Stage; pattern: RegExp }[] = [
+  // A nonforced push must not overwrite work published after our fetch.
+  { reason: "remote-advanced", stage: "push", pattern: /^\s*!\s+\[rejected\][^\r\n]*\((?:fetch first|non-fast-forward)\)\s*$/im },
   { reason: "index-lock", pattern: /unable to create '[^\n]*index\.lock': file exists/i },
   { reason: "pathspec-missing", pattern: /pathspec '[^\n]*' did not match any files/i },
   { reason: "nothing-to-commit", stage: "commit", pattern: /nothing (?:added )?to commit|no changes added to commit/i },
@@ -141,7 +143,7 @@ async function drain(stream: ReadableStream<Uint8Array>, keep: number): Promise<
   return new TextDecoder().decode(held);
 }
 
-function diagnose(stage: Stage, status: number, signal: string | null, stdout: string, stderr: string): SyncDiagnostic {
+export function diagnoseGitFailure(stage: Stage, status: number, signal: string | null, stdout: string, stderr: string): SyncDiagnostic {
   if (signal) return { stage, reason: "signal", ...(SIGNALS.has(signal) ? { signal } : {}) };
   // stderr is sorted first. The one thing read from stdout is an empty commit,
   // which real git was seen to say there with stderr empty, and only at the
