@@ -136,8 +136,57 @@ Exit codes:
 | 2 | `REFUSED` (preflight; nothing started) |
 | 4 | `CLEANUP_UNVERIFIED` or `INTERRUPTED` (cleanup overrides everything) |
 
+## Two hosts: the return move (`live/prove-return-move.ts`)
+
+One real Claude conversation is moved Mac → Pi → Mac by the shipped movement machinery. The second move is a RETURN onto the Mac's
+retained copy. The script runs on the Mac and reaches the Pi over ssh only (BatchMode, strict host keys).
+
+**What runs:**
+- One throwaway Postgres on the Mac. The Pi reaches it through an ssh reverse forward bound to the Pi's loopback.
+- A registry with two machines (`store_machine = "mac"`), each with its own state directory, person tree and credential path. It is
+  cloned to the Pi once; after that, only `deliverRegistry` changes the Pi's copy.
+- On each host, as separate processes:
+  - the hub's registry delivery (`live/prove-hub-loop.ts`: `deliverRegistry`, `recordRegistryDigest`, `registerMoves`, in
+    `hub/run.ts` order);
+  - the production runner (`live/prove-engine-runner-child.ts`, stopped over ssh by closing its stdin).
+- The door, on the Mac, on the fake platform.
+
+**How the move is asked for:** the model itself calls the production `hub_topic` tool, because the owner asked in the chat. The owner's
+message states its own id, because the shipped feed does not show the model message ids.
+
+**Scenario:**
+1. Mac: read marker A with a tool, without saying it.
+2. Mac: the owner asks to move to pi. Wait until the move is active.
+3. Pi: recall A, with no tool.
+4. Pi: read marker B with a tool, without saying it.
+5. Pi: the owner asks to move back. Wait until the move is active.
+6. Mac: recall A and B, with no tool.
+
+**Also judged:**
+- The Mac's retained archive holds A and not B: it is the old copy.
+- The current session holds both.
+- Every start on the Pi and after the return resumed the same native id.
+- Both source engines were gone after their move.
+- The ledger has `move.return-archived` and `move.return-reconciled`.
+
+Each marker sits at the top of its tree and is removed before the move that leaves that tree. The move refuses any tree entry it neither
+carries nor verifies (`workspace_carriage_required`), and that includes an emptied directory.
+
+```sh
+BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING=1 bun live/prove-return-move.ts --pi <user@host> \
+  --pi-src <abs packages/plugin-hub on the pi> --pi-bun <abs bun on the pi> \
+  --mac-bin <abs claude 2.1.286> --pi-bin <abs claude 2.1.285> \
+  --mac-credential <abs .credentials.json> --pi-credential <abs .credentials.json on the pi> \
+  --model <id> [--effort low] --evidence-dir <abs dir> [--move-timeout-ms 900000] [--keep-scratch] [--keep-stderr] --allow-paid-call
+```
+
+**Output and cleanup:**
+- Output goes to `<evidence>/return-move-<stamp>-<tag>/`, with the same exit codes as above.
+- The report and replies are saved first.
+- Then the runners, the door, the hubs, the forward, the cluster and both hosts' scratch are removed.
+
 ## Not covered
 
-- Moving a conversation between machines (Mac→Pi→Mac) is a two-host flow this single-host harness does not drive.
+- A Codex or OpenCode move: Codex and OpenCode have no native session port (`native_port_missing`).
 - Interrupted-tool recovery (`safeResume`).
 - Long or compacted sessions.
