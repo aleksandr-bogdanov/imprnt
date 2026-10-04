@@ -1,0 +1,55 @@
+# The Windows execution machine's paste block (packages/plugin-hub/tools/windows/executor-setup.ps1) on a
+# real Windows. Started by hand only: nothing here runs on a push or a pull request.
+#
+# What it can prove: the block parses under Windows PowerShell 5.1 and PowerShell 7, has no
+# PSScriptAnalyzer error, and runs its read-only preflight on a real Windows to its own stop line and
+# summary. What it cannot: GitHub's Windows runners have no WSL 2 (no nested virtualization) and run
+# elevated, so the preflight ends at the block's refusal of an Administrator window, and nothing inside
+# WSL is exercised. That part is proven only by the owner running the block on the PC.
+name: Windows executor block
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  block:
+    name: parse + analyze + preflight
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      BLOCK: packages/plugin-hub/tools/windows/executor-setup.ps1
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: parse (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $t = $null; $e = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $env:BLOCK).Path, [ref]$t, [ref]$e)
+          $e | ForEach-Object { Write-Host $_.ToString() }
+          $PSVersionTable.PSVersion.ToString()
+          if ($e.Count) { exit 1 }
+      - name: parse (PowerShell 7)
+        shell: pwsh
+        run: |
+          $t = $null; $e = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $env:BLOCK).Path, [ref]$t, [ref]$e)
+          $e | ForEach-Object { Write-Host $_.ToString() }
+          if ($e.Count) { exit 1 }
+      - name: PSScriptAnalyzer (errors)
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.23.0 -Scope CurrentUser -Force
+          $found = Invoke-ScriptAnalyzer -Path $env:BLOCK -Severity Error
+          $found | Format-Table -AutoSize | Out-String | Write-Host
+          if ($found) { exit 1 }
+      - name: preflight only (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $text = (Get-Content -Raw $env:BLOCK) -replace '\$PreflightOnly\s+= \$false', '$PreflightOnly = $true'
+          if ($text -notmatch '\$PreflightOnly = \$true') { Write-Host 'could not switch the block to preflight only'; exit 1 }
+          $out = & ([scriptblock]::Create($text)) *>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch '(?m)^result: STOPPED: ') { exit 1 }
